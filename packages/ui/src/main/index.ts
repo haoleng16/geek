@@ -57,6 +57,11 @@ const runMode = commandlineArgs['mode']
       runEntry()
       break
     }
+    case 'recruiterAutoReplyMain': {
+      const { runEntry } = await import('./flow/RECRUITER_AUTO_REPLY_MAIN/index')
+      runEntry()
+      break
+    }
     case 'launchDaemon': {
       await import('./flow/LAUNCH_DAEMON')
       break

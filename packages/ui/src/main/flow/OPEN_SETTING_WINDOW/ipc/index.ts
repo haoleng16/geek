@@ -176,6 +176,20 @@ export default function initIpc() {
       bossConfig.fieldsForUseCommonConfig = payload.fieldsForUseCommonConfig
     }
 
+    // 招聘端自动回复相关配置
+    if (hasOwn(payload, 'recruiterAutoReply')) {
+      bossConfig.recruiterAutoReply = payload.recruiterAutoReply
+    }
+    if (hasOwn(payload, 'candidateFilter')) {
+      bossConfig.candidateFilter = payload.candidateFilter
+    }
+    if (hasOwn(payload, 'quickReply')) {
+      bossConfig.quickReply = payload.quickReply
+    }
+    if (hasOwn(payload, 'replyStrategy')) {
+      bossConfig.replyStrategy = payload.replyStrategy
+    }
+
     promiseArr.push(writeConfigFile('boss.json', bossConfig))
 
     if (hasOwn(payload, 'expectCompanies')) {
@@ -606,5 +620,105 @@ export default function initIpc() {
 
   ipcMain.handle('exit-app-immediately', () => {
     app.exit(0)
+  })
+
+  // ==================== 招聘端自动回复 IPC ====================
+
+  // 启动招聘端自动回复任务
+  ipcMain.handle('run-recruiter-auto-reply', async () => {
+    const mode = 'recruiterAutoReplyMain'
+    const { runRecordId } = await runCommon({ mode })
+    daemonEE.on('message', function handler(message) {
+      if (message.workerId !== mode) {
+        return
+      }
+      if (message.type === 'worker-exited') {
+        mainWindow?.webContents.send('worker-exited', message)
+      }
+    })
+    return { runRecordId }
+  })
+
+  // 停止招聘端自动回复任务
+  ipcMain.handle('stop-recruiter-auto-reply', async () => {
+    mainWindow?.webContents.send('recruiter-auto-reply-stopping')
+    const p = new Promise((resolve) => {
+      daemonEE.on('message', function handler(message) {
+        if (message.workerId !== 'recruiterAutoReplyMain') {
+          return
+        }
+        if (message.type === 'worker-exited') {
+          daemonEE.off('message', handler)
+          resolve(undefined)
+        }
+      })
+    })
+    await sendToDaemon(
+      {
+        type: 'stop-worker',
+        workerId: 'recruiterAutoReplyMain'
+      },
+      {
+        needCallback: true
+      }
+    )
+    await p
+    mainWindow?.webContents.send('recruiter-auto-reply-stopped')
+  })
+
+  // 获取招聘者职位配置列表
+  ipcMain.handle('recruiter-get-job-config-list', async () => {
+    const { getRecruiterJobConfigList } = await import('../utils/db/index')
+    return await getRecruiterJobConfigList()
+  })
+
+  // 保存招聘者职位配置
+  ipcMain.handle('recruiter-save-job-config', async (_, config) => {
+    const { saveRecruiterJobConfig } = await import('../utils/db/index')
+    return await saveRecruiterJobConfig(config)
+  })
+
+  // 删除招聘者职位配置
+  ipcMain.handle('recruiter-delete-job-config', async (_, id) => {
+    const { deleteRecruiterJobConfig } = await import('../utils/db/index')
+    return await deleteRecruiterJobConfig(id)
+  })
+
+  // 获取候选人列表
+  ipcMain.handle('recruiter-get-candidates', async (_, params) => {
+    const { getCandidateConversationList } = await import('../utils/db/index')
+    return await getCandidateConversationList(params)
+  })
+
+  // 获取每日统计
+  ipcMain.handle('recruiter-get-daily-stats', async (_, date, encryptJobId) => {
+    const { getRecruiterDailyStats } = await import('../utils/db/index')
+    return await getRecruiterDailyStats(date, encryptJobId)
+  })
+
+  // 获取处理日志
+  ipcMain.handle('recruiter-get-process-logs', async (_, params) => {
+    const { getRecruiterProcessLogList } = await import('../utils/db/index')
+    return await getRecruiterProcessLogList(params)
+  })
+
+  // 保存招聘者每日统计
+  ipcMain.handle('recruiter-save-daily-stats', async (_, stats) => {
+    const { saveRecruiterDailyStats } = await import('../utils/db/index')
+    return await saveRecruiterDailyStats(stats)
+  })
+
+  // 获取招聘者配置
+  ipcMain.handle('recruiter-get-config', async () => {
+    const config = readConfigFile('boss.json')
+    return config?.recruiterAutoReply || {}
+  })
+
+  // 保存招聘者配置
+  ipcMain.handle('recruiter-save-config', async (_, config) => {
+    const bossConfig = readConfigFile('boss.json')
+    bossConfig.recruiterAutoReply = config
+    await writeConfigFile('boss.json', bossConfig)
+    return true
   })
 }

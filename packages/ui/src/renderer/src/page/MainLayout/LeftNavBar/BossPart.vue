@@ -68,16 +68,35 @@
               <div>匹配逻辑</div>
               <div>在聊天列表中查找对你消息已读不回的BOSS，再发一条消息，多次复聊；同时：</div>
               <ul m0 pl2em>
-                <li>如果设置了“跟进时限”，那么在这个时间之前活跃的聊天将不会被检查</li>
+                <li>如果设置了"跟进时限"，那么在这个时间之前活跃的聊天将不会被检查</li>
                 <li>
-                  如果设置了“跟进间隔”，且再次检查时发现BOSS已读不回，且距离上次提醒时间间隔小于这个时间，那么聊天将暂时不会跟进，直到下次检查时距离上次提醒时间间隔大于这个时间
+                  如果设置了"跟进间隔"，且再次检查时发现BOSS已读不回，且距离上次提醒时间间隔小于这个时间，那么聊天将暂时不会跟进，直到下次检查时距离上次提醒时间间隔大于这个时间
                 </li>
               </ul>
               <br />
               <div>发送内容</div>
               <ul m0 pl2em>
-                <li>“[盼回复]”表情</li>
+                <li>"[盼回复]"表情</li>
                 <li>由大语言模型（根据简历及当前聊天上下文）生成的内容</li>
+              </ul>
+            </div>
+          </template>
+          <QuestionFilled w-1em h-1em mr10px />
+        </el-tooltip>
+      </RouterLink>
+      <RouterLink to="./RecruiterAutoReply">
+        招聘端自动回复
+        <el-tooltip placement="right" :enterable="false">
+          <template #content>
+            <div w-480px>
+              <div>招聘者专用功能：自动监控求职者消息并智能回复</div>
+              <br />
+              <div>核心功能</div>
+              <ul m0 pl2em>
+                <li>自动监控聊天列表中的新消息</li>
+                <li>根据筛选条件智能筛选候选人</li>
+                <li>支持配置多条快捷回复模版</li>
+                <li>不匹配的候选人可自动发送婉拒消息</li>
               </ul>
             </div>
           </template>

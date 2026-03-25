@@ -109,3 +109,97 @@ export const saveAndGetCurrentRunRecord = async () => {
   })
   return res
 }
+
+// ==================== Recruiter Auto-Reply DB Functions ====================
+
+export const getRecruiterJobConfigList = async () => {
+  const res = await createWorkerPromise({
+    type: 'getRecruiterJobConfigList'
+  })
+  return res
+}
+
+export const saveRecruiterJobConfig = async (config: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecruiterJobConfig',
+    config
+  })
+  return res
+}
+
+export const deleteRecruiterJobConfig = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'deleteRecruiterJobConfig',
+    id
+  })
+  return res
+}
+
+export const getCandidateConversationList = async (params: {
+  encryptJobId?: string
+  status?: string
+  page?: number
+  pageSize?: number
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getCandidateConversationList',
+    ...params
+  })
+  return res
+}
+
+export const getRecruiterDailyStats = async (date: string, encryptJobId?: string) => {
+  const res = await createWorkerPromise({
+    type: 'getRecruiterDailyStats',
+    date,
+    encryptJobId
+  })
+  return res
+}
+
+export const saveRecruiterDailyStats = async (stats: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecruiterDailyStats',
+    ...stats
+  })
+  return res
+}
+
+export const getRecruiterProcessLogList = async (params: {
+  encryptGeekId?: string
+  encryptJobId?: string
+  action?: string
+  page?: number
+  pageSize?: number
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getRecruiterProcessLogList',
+    ...params
+  })
+  return res
+}
+
+export const saveRecruiterProcessLog = async (log: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecruiterProcessLog',
+    ...log
+  })
+  return res
+}
+
+export const saveCandidateConversation = async (conversation: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveCandidateConversation',
+    ...conversation
+  })
+  return res
+}
+
+export const getCandidateConversation = async (encryptGeekId: string, encryptJobId: string) => {
+  const res = await createWorkerPromise({
+    type: 'getCandidateConversation',
+    encryptGeekId,
+    encryptJobId
+  })
+  return res
+}

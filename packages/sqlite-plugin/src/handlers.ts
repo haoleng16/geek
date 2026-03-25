@@ -12,6 +12,11 @@ import { MarkAsNotSuitLog } from "./entity/MarkAsNotSuitLog";
 import { ChatMessageRecord } from "./entity/ChatMessageRecord";
 import { LlmModelUsageRecord } from "./entity/LlmModelUsageRecord";
 import { JobHireStatusRecord } from "./entity/JobHireStatusRecord";
+import { RecruiterJobConfig } from "./entity/RecruiterJobConfig";
+import { CandidateConversation } from "./entity/CandidateConversation";
+import { CandidateResumeRecord } from "./entity/CandidateResumeRecord";
+import { RecruiterProcessLog } from "./entity/RecruiterProcessLog";
+import { RecruiterDailyStats } from "./entity/RecruiterDailyStats";
 
 function getBossInfoIfIsEqual (savedOne, currentOne) {
   if (savedOne === currentOne) {
@@ -387,4 +392,265 @@ export async function getJobHireStatusRecord(
     }
   })
   return result
+}
+
+// ==================== Recruiter Auto-Reply Handlers ====================
+
+/**
+ * 保存候选人简历记录
+ */
+export async function saveCandidateResumeRecord(
+  ds: DataSource,
+  record: Partial<CandidateResumeRecord>
+) {
+  const repo = ds.getRepository(CandidateResumeRecord);
+  const entity = new CandidateResumeRecord();
+  Object.assign(entity, record);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取候选人简历记录
+ */
+export async function getCandidateResumeRecord(
+  ds: DataSource,
+  encryptGeekId: string
+) {
+  const repo = ds.getRepository(CandidateResumeRecord);
+  return await repo.findOne({
+    where: { encryptGeekId }
+  });
+}
+
+/**
+ * 保存候选人对话记录
+ */
+export async function saveCandidateConversation(
+  ds: DataSource,
+  conversation: Partial<CandidateConversation>
+) {
+  const repo = ds.getRepository(CandidateConversation);
+  let entity: CandidateConversation;
+
+  if (conversation.id) {
+    entity = await repo.findOne({ where: { id: conversation.id } }) || new CandidateConversation();
+  } else if (conversation.encryptGeekId && conversation.encryptJobId) {
+    entity = await repo.findOne({
+      where: {
+        encryptGeekId: conversation.encryptGeekId,
+        encryptJobId: conversation.encryptJobId
+      }
+    }) || new CandidateConversation();
+  } else {
+    entity = new CandidateConversation();
+  }
+
+  Object.assign(entity, conversation);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取候选人对话记录
+ */
+export async function getCandidateConversation(
+  ds: DataSource,
+  encryptGeekId: string,
+  encryptJobId: string
+) {
+  const repo = ds.getRepository(CandidateConversation);
+  return await repo.findOne({
+    where: {
+      encryptGeekId,
+      encryptJobId
+    }
+  });
+}
+
+/**
+ * 保存招聘者处理日志
+ */
+export async function saveRecruiterProcessLog(
+  ds: DataSource,
+  log: Partial<RecruiterProcessLog>
+) {
+  const repo = ds.getRepository(RecruiterProcessLog);
+  const entity = new RecruiterProcessLog();
+  Object.assign(entity, log);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 保存招聘者每日统计
+ */
+export async function saveRecruiterDailyStats(
+  ds: DataSource,
+  stats: Partial<RecruiterDailyStats>
+) {
+  const repo = ds.getRepository(RecruiterDailyStats);
+  let entity: RecruiterDailyStats;
+
+  if (stats.id) {
+    entity = await repo.findOne({ where: { id: stats.id } }) || new RecruiterDailyStats();
+  } else if (stats.date) {
+    const where: any = { date: stats.date };
+    if (stats.encryptJobId !== undefined) {
+      where.encryptJobId = stats.encryptJobId;
+    }
+    entity = await repo.findOne({ where }) || new RecruiterDailyStats();
+  } else {
+    entity = new RecruiterDailyStats();
+  }
+
+  Object.assign(entity, stats);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取招聘者每日统计
+ */
+export async function getRecruiterDailyStats(
+  ds: DataSource,
+  date: string,
+  encryptJobId?: string
+) {
+  const repo = ds.getRepository(RecruiterDailyStats);
+  const where: any = { date };
+  if (encryptJobId !== undefined) {
+    where.encryptJobId = encryptJobId;
+  }
+  return await repo.findOne({ where });
+}
+
+/**
+ * 获取招聘者每日统计列表（按职位）
+ */
+export async function getRecruiterDailyStatsListByDate(
+  ds: DataSource,
+  date: string
+) {
+  const repo = ds.getRepository(RecruiterDailyStats);
+  return await repo.find({
+    where: { date }
+  });
+}
+
+/**
+ * 保存招聘者职位配置
+ */
+export async function saveRecruiterJobConfig(
+  ds: DataSource,
+  config: Partial<RecruiterJobConfig>
+) {
+  const repo = ds.getRepository(RecruiterJobConfig);
+  let entity: RecruiterJobConfig;
+
+  if (config.id) {
+    entity = await repo.findOne({ where: { id: config.id } }) || new RecruiterJobConfig();
+  } else if (config.encryptJobId) {
+    entity = await repo.findOne({ where: { encryptJobId: config.encryptJobId } }) || new RecruiterJobConfig();
+  } else {
+    entity = new RecruiterJobConfig();
+  }
+
+  Object.assign(entity, config);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取招聘者职位配置列表
+ */
+export async function getRecruiterJobConfigList(ds: DataSource) {
+  const repo = ds.getRepository(RecruiterJobConfig);
+  return await repo.find({
+    order: { createdAt: 'DESC' }
+  });
+}
+
+/**
+ * 获取单个招聘者职位配置
+ */
+export async function getRecruiterJobConfig(
+  ds: DataSource,
+  encryptJobId: string
+) {
+  const repo = ds.getRepository(RecruiterJobConfig);
+  return await repo.findOne({
+    where: { encryptJobId }
+  });
+}
+
+/**
+ * 删除招聘者职位配置
+ */
+export async function deleteRecruiterJobConfig(
+  ds: DataSource,
+  id: number
+) {
+  const repo = ds.getRepository(RecruiterJobConfig);
+  await repo.delete(id);
+}
+
+/**
+ * 获取候选人列表（分页）
+ */
+export async function getCandidateConversationList(
+  ds: DataSource,
+  params: {
+    encryptJobId?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  const repo = ds.getRepository(CandidateConversation);
+  const { encryptJobId, status, page = 1, pageSize = 20 } = params;
+
+  const where: any = {};
+  if (encryptJobId) where.encryptJobId = encryptJobId;
+  if (status) where.status = status;
+
+  const [list, total] = await repo.findAndCount({
+    where,
+    order: { updatedAt: 'DESC' },
+    skip: (page - 1) * pageSize,
+    take: pageSize
+  });
+
+  return { list, total, page, pageSize };
+}
+
+/**
+ * 获取招聘者处理日志列表
+ */
+export async function getRecruiterProcessLogList(
+  ds: DataSource,
+  params: {
+    encryptGeekId?: string;
+    encryptJobId?: string;
+    action?: string;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  const repo = ds.getRepository(RecruiterProcessLog);
+  const { encryptGeekId, encryptJobId, action, page = 1, pageSize = 20 } = params;
+
+  const where: any = {};
+  if (encryptGeekId) where.encryptGeekId = encryptGeekId;
+  if (encryptJobId) where.encryptJobId = encryptJobId;
+  if (action) where.action = action;
+
+  const [list, total] = await repo.findAndCount({
+    where,
+    order: { createdAt: 'DESC' },
+    skip: (page - 1) * pageSize,
+    take: pageSize
+  });
+
+  return { list, total, page, pageSize };
 }

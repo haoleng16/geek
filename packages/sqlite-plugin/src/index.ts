@@ -20,6 +20,11 @@ import { VMarkAsNotSuitLog } from "./entity/VMarkAsNotSuitLog"
 import { ChatMessageRecord } from './entity/ChatMessageRecord'
 import { LlmModelUsageRecord } from './entity/LlmModelUsageRecord'
 import { JobHireStatusRecord } from './entity/JobHireStatusRecord'
+import { RecruiterJobConfig } from './entity/RecruiterJobConfig'
+import { CandidateConversation } from './entity/CandidateConversation'
+import { CandidateResumeRecord } from './entity/CandidateResumeRecord'
+import { RecruiterProcessLog } from './entity/RecruiterProcessLog'
+import { RecruiterDailyStats } from './entity/RecruiterDailyStats'
 
 import {
   saveChatStartupRecord,
@@ -38,6 +43,7 @@ import { AddColumnForMarkAsNotSuitLog1746092370665 } from "./migrations/17460923
 import { Init1000000000000 } from "./migrations/1000000000000-Init";
 import { AddJobSourceColumnForChatStartupLogAndMarkAsNotSuitLog1752380078526 } from "./migrations/1752380078526-AddJobSourceColumnForChatStartupLogAndMarkAsNotSuitLog";
 import { AddJobHireStatusTable1766466476822 } from "./migrations/1766466476822-AddJobHireStatusTable";
+import { AddRecruiterTables1777555555555 } from "./migrations/1777555555555-AddRecruiterTables";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -69,6 +75,11 @@ export function initDb(dbFilePath) {
       ChatMessageRecord,
       LlmModelUsageRecord,
       JobHireStatusRecord,
+      RecruiterJobConfig,
+      CandidateConversation,
+      CandidateResumeRecord,
+      RecruiterProcessLog,
+      RecruiterDailyStats,
     ],
     migrations: [
       Init1000000000000,
@@ -76,7 +87,8 @@ export function initDb(dbFilePath) {
       UpdateBossInfoTable1732032381304,
       AddColumnForMarkAsNotSuitLog1746092370665,
       AddJobSourceColumnForChatStartupLogAndMarkAsNotSuitLog1752380078526,
-      AddJobHireStatusTable1766466476822
+      AddJobHireStatusTable1766466476822,
+      AddRecruiterTables1777555555555
     ],
     migrationsRun: true
   });

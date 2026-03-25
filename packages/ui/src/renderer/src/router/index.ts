@@ -126,6 +126,13 @@ const routes: Array<RouteRecordRaw> = [
         meta: {
           title: '公司库'
         }
+      },
+      {
+        path: 'RecruiterAutoReply',
+        component: () => import('@renderer/page/MainLayout/RecruiterAutoReply.vue'),
+        meta: {
+          title: '招聘端自动回复'
+        }
       }
     ]
   },
