@@ -13,9 +13,7 @@ import { UserInfo } from "./entity/UserInfo";
 import { AutoStartChatRunRecord } from './entity/AutoStartChatRunRecord';
 import { MarkAsNotSuitLog } from "./entity/MarkAsNotSuitLog"
 import { VChatStartupLog } from "./entity/VChatStartupLog";
-import { VBossLibrary } from "./entity/VBossLibrary";
 import { VJobLibrary } from "./entity/VJobLibrary";
-import { VCompanyLibrary } from "./entity/VCompanyLibrary"
 import { VMarkAsNotSuitLog } from "./entity/VMarkAsNotSuitLog"
 import { ChatMessageRecord } from './entity/ChatMessageRecord'
 import { LlmModelUsageRecord } from './entity/LlmModelUsageRecord'
@@ -67,9 +65,7 @@ export function initDb(dbFilePath) {
       UserInfo,
       AutoStartChatRunRecord,
       VChatStartupLog,
-      VBossLibrary,
       VJobLibrary,
-      VCompanyLibrary,
       MarkAsNotSuitLog,
       VMarkAsNotSuitLog,
       ChatMessageRecord,

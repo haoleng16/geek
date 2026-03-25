@@ -114,20 +114,6 @@ const routes: Array<RouteRecordRaw> = [
         }
       },
       {
-        path: 'BossLibrary',
-        component: () => import('@renderer/page/MainLayout/BossLibrary.vue'),
-        meta: {
-          title: 'BOSS库'
-        }
-      },
-      {
-        path: 'CompanyLibrary',
-        component: () => import('@renderer/page/MainLayout/CompanyLibrary.vue'),
-        meta: {
-          title: '公司库'
-        }
-      },
-      {
         path: 'RecruiterAutoReply',
         component: () => import('@renderer/page/MainLayout/RecruiterAutoReply.vue'),
         meta: {

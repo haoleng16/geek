@@ -14,8 +14,6 @@ import { getAnyAvailablePuppeteerExecutable } from '../../DOWNLOAD_DEPENDENCIES/
 import { mainWindow } from '../../../window/mainWindow'
 import {
   getAutoStartChatRecord,
-  getBossLibrary,
-  getCompanyLibrary,
   getJobLibrary,
   getJobHistoryByEncryptId,
   getMarkAsNotSuitRecord
@@ -323,14 +321,6 @@ export default function initIpc() {
   })
   ipcMain.handle('get-job-library', async (ev, payload: PageReq) => {
     const a = await getJobLibrary(payload)
-    return a
-  })
-  ipcMain.handle('get-boss-library', async (ev, payload: PageReq) => {
-    const a = await getBossLibrary(payload)
-    return a
-  })
-  ipcMain.handle('get-company-library', async (ev, payload: PageReq) => {
-    const a = await getCompanyLibrary(payload)
     return a
   })
 
