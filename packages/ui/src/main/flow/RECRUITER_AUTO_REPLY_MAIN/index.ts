@@ -20,6 +20,70 @@ import { getPublicDbFilePath } from '@geekgeekrun/geek-auto-start-chat-with-boss
 import { RecruiterContactedCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterContactedCandidate'
 import type { DataSource } from 'typeorm'
 
+// ==================== 模版类型定义 ====================
+type TemplateType = 'initial' | 'resume_received' | 'reject'
+
+const TEMPLATE_ORDER: TemplateType[] = ['initial', 'resume_received', 'reject']
+
+const TEMPLATE_NAMES: Record<TemplateType, string> = {
+  'initial': '首次回复',
+  'resume_received': '收到简历',
+  'reject': '婉拒回复'
+}
+
+const DEFAULT_TEMPLATES: Record<TemplateType, string> = {
+  'initial': '你好呀，方便发一份简历吗',
+  'resume_received': '收到您的简历了，我们会尽快查看，有结果会第一时间通知您。',
+  'reject': '感谢您的投递，但您的经历与该职位要求不太匹配，希望您能找到更适合的机会。'
+}
+
+// 获取全局模版
+async function getGlobalTemplates(ds: DataSource): Promise<Map<TemplateType, string>> {
+  const map = new Map<TemplateType, string>()
+  try {
+    // 使用原生 SQL 查询，避免 typeorm 打包问题
+    const templates = await ds.query(
+      `SELECT templateType, content FROM recruiter_template WHERE encryptJobId IS NULL AND templateType IN ('initial', 'resume_received', 'reject')`
+    )
+
+    for (const t of templates) {
+      map.set(t.templateType as TemplateType, t.content)
+    }
+  } catch (err) {
+    console.error('[getGlobalTemplates] 获取模版失败:', err)
+  }
+  return map
+}
+
+// 确保默认模版存在
+async function ensureDefaultTemplates(ds: DataSource): Promise<void> {
+  for (const type of TEMPLATE_ORDER) {
+    // 使用原生 SQL 查询检查是否存在
+    const existing = await ds.query(
+      `SELECT id FROM recruiter_template WHERE encryptJobId IS NULL AND templateType = ? LIMIT 1`,
+      [type]
+    )
+
+    if (!existing || existing.length === 0) {
+      // 使用原生 SQL 插入
+      await ds.query(
+        `INSERT INTO recruiter_template (encryptJobId, templateType, name, content, enabled, sortOrder, createdAt, updatedAt) VALUES (NULL, ?, ?, ?, 1, 0, datetime('now'), datetime('now'))`,
+        [type, TEMPLATE_NAMES[type], DEFAULT_TEMPLATES[type]]
+      )
+      console.log(`[ensureDefaultTemplates] 已创建默认模版: ${type}`)
+    }
+  }
+}
+
+// 获取第一个有内容的模版
+function getFirstAvailableTemplate(templates: Map<TemplateType, string>): string {
+  for (const type of TEMPLATE_ORDER) {
+    const content = templates.get(type)
+    if (content) return content
+  }
+  return ''
+}
+
 process.on('SIGTERM', () => {
   console.log('收到SIGTERM信号，正在退出')
   process.exit(0)
@@ -642,34 +706,63 @@ const mainLoop = async () => {
       continue
     }
 
+    // 获取全局模版
+    const templates = await getGlobalTemplates(dataSource!)
+
+    // 用于存储要发送的回复内容
+    let replyContentToSend: string | null = null
+
     if (!cfg.autoSend) {
       if (cfg.confirmBeforeSend) {
-        const previewReplyContent = getReplyContent()
+        // 构建模版选择对话框
+        const buttons = [
+          TEMPLATE_NAMES['initial'],
+          TEMPLATE_NAMES['resume_received'],
+          TEMPLATE_NAMES['reject'],
+          '跳过',
+          '停止任务'
+        ]
+
+        // 预览内容：第一个有内容的模版
+        const previewContent = getFirstAvailableTemplate(templates) || getReplyContent()
+
         const res = await dialog.showMessageBox({
           type: 'question',
-          message: `发现新消息：${targetChat?.name ?? ''}`,
-          detail: `是否发送快捷回复？\n\n${previewReplyContent}`,
-          buttons: ['发送', '跳过', '停止任务'],
-          defaultId: 0,
-          cancelId: 1
+          message: `发现新消息：${targetChat?.name ?? '候选人'}`,
+          detail: `是否发送快捷回复？\n\n${previewContent}`,
+          buttons,
+          defaultId: 0,  // 默认选中"首次回复"
+          cancelId: 3    // ESC键对应"跳过"
         })
-        if (res.response === 2) {
+
+        // 处理用户选择
+        if (res.response === 4) {
+          // 停止任务
           process.exit(0)
         }
-        if (res.response !== 0) {
+        if (res.response === 3) {
+          // 跳过
           cursorToContinueFind += 1
           await sleep(cfg.scanIntervalSeconds * 1000)
           continue
         }
+
+        // 用户选择了模版，获取对应内容
+        const selectedType = TEMPLATE_ORDER[res.response]
+        replyContentToSend = templates.get(selectedType) || DEFAULT_TEMPLATES[selectedType]
       } else {
         // assist mode without sending; give user a little time to reply manually
         await sleep(15 * 1000)
         cursorToContinueFind += 1
         continue
       }
+    } else {
+      // 自动模式：使用默认模版（首次回复）
+      replyContentToSend = templates.get('initial') || DEFAULT_TEMPLATES['initial']
     }
 
-    const currentReplyContent = getReplyContent()
+    // 使用选择的模版内容发送
+    const currentReplyContent = replyContentToSend || getReplyContent()
     console.log('[mainLoop] 准备发送消息:', currentReplyContent?.substring(0, 50))
     await sendMessage(pageMapByName.boss!, currentReplyContent)
     console.log('[mainLoop] 消息发送完成')
@@ -786,6 +879,9 @@ export async function runEntry() {
   try {
     dataSource = await dbInitPromise
     console.log('[runEntry] 数据库初始化成功')
+
+    // 确保默认模版存在
+    await ensureDefaultTemplates(dataSource)
   } catch (dbErr) {
     console.error('[runEntry] 数据库初始化失败:', dbErr)
   }

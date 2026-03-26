@@ -334,7 +334,7 @@
             type="textarea"
             :rows="5"
             placeholder="请输入模版内容"
-            maxlength="500"
+            maxlength="200"
             show-word-limit
           />
         </el-form-item>

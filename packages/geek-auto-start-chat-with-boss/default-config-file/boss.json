@@ -40,5 +40,80 @@
   "sageTimeOpTimes": 100,
   "sageTimePauseMinute": 15,
   "blockCompanyNameRegExpStr": "",
-  "fieldsForUseCommonConfig": {}
+  "fieldsForUseCommonConfig": {},
+  "recruiterAutoReply": {
+    "chatUiUrl": "",
+    "scanIntervalSeconds": 5,
+    "autoSend": false,
+    "confirmBeforeSend": true,
+    "constantReplyContent": "您好，收到您的消息，我会尽快回复您。",
+    "candidateFilter": {
+      "enabled": false,
+      "degreeList": ["本科", "硕士", "博士"],
+      "minWorkYears": 0,
+      "maxWorkYears": 0,
+      "expectJobKeywords": [],
+      "skillKeywords": [],
+      "blockKeywords": []
+    },
+    "quickReply": {
+      "list": [
+        {
+          "id": 1,
+          "name": "收到简历",
+          "content": "您好，收到您的简历，我们会尽快查看并给您回复，谢谢！",
+          "enabled": true,
+          "order": 1
+        },
+        {
+          "id": 2,
+          "name": "邀请面试",
+          "content": "您好，您的简历已通过初步筛选，方便安排面试吗？请问您什么时间方便？",
+          "enabled": true,
+          "order": 2
+        },
+        {
+          "id": 3,
+          "name": "索要简历",
+          "content": "您好，能发一份详细的简历吗？我们想进一步了解您的背景。",
+          "enabled": true,
+          "order": 3
+        }
+      ]
+    },
+    "replyStrategy": {
+      "matchReplyMode": "constant",
+      "matchReplyContent": "您好，您的简历很符合我们的要求，方便发一份详细简历吗？",
+      "notMatchAction": "skip",
+      "notMatchReplyContent": ""
+    },
+    "conversation": {
+      "maxRounds": 3,
+      "handoverKeywords": ["人工客服", "转人工", "面试", "薪资"],
+      "autoHandoverOnComplex": true
+    },
+    "antiDetection": {
+      "minDelay": 3000,
+      "maxDelay": 10000,
+      "perMinuteLimit": 10,
+      "perHourLimit": 50,
+      "dailyLimit": 100,
+      "simulateTyping": true,
+      "simulateMouseMovement": true,
+      "randomScroll": true,
+      "workHourStart": 9,
+      "workHourEnd": 18,
+      "respectWorkHours": false
+    },
+    "llmReply": {
+      "enabled": false,
+      "config": {
+        "tone": "professional",
+        "maxLength": 80,
+        "includeCompanyInfo": false,
+        "guideToInterview": true,
+        "language": "zh"
+      }
+    }
+  }
 }
