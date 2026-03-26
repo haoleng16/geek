@@ -14,6 +14,8 @@ import { RecruiterJobConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/Recru
 import { CandidateConversation } from '@geekgeekrun/sqlite-plugin/dist/entity/CandidateConversation'
 import { RecruiterProcessLog } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterProcessLog'
 import { RecruiterDailyStats } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterDailyStats'
+import { RecruiterTemplate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterTemplate'
+import { RecruiterContactedCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterContactedCandidate'
 
 const dbInitPromise = initDb(getPublicDbFilePath())
 let dataSource: DataSource | null = null
@@ -259,6 +261,127 @@ const payloadHandler = {
         encryptJobId
       }
     })
+  },
+  // ==================== Recruiter Template Handlers ====================
+  async getRecruiterTemplateList(params?: {
+    encryptJobId?: string
+    templateType?: string
+  }): Promise<RecruiterTemplate[]> {
+    const { encryptJobId, templateType } = params || {}
+    const repo = dataSource!.getRepository(RecruiterTemplate)
+
+    const where: any = {}
+    if (encryptJobId !== undefined) where.encryptJobId = encryptJobId
+    if (templateType) where.templateType = templateType
+
+    return await repo.find({
+      where,
+      order: { sortOrder: 'ASC', createdAt: 'ASC' }
+    })
+  },
+  async saveRecruiterTemplate({ template }: { template: Partial<RecruiterTemplate> }): Promise<RecruiterTemplate> {
+    const repo = dataSource!.getRepository(RecruiterTemplate)
+    let entity: RecruiterTemplate
+
+    if (template.id) {
+      entity = await repo.findOne({ where: { id: template.id } }) || new RecruiterTemplate()
+    } else {
+      entity = new RecruiterTemplate()
+    }
+
+    Object.assign(entity, template)
+    return await repo.save(entity)
+  },
+  async deleteRecruiterTemplate({ id }): Promise<void> {
+    const repo = dataSource!.getRepository(RecruiterTemplate)
+    await repo.delete(id)
+  },
+  async getRecruiterTemplateById({ id }): Promise<RecruiterTemplate | null> {
+    const repo = dataSource!.getRepository(RecruiterTemplate)
+    return await repo.findOne({ where: { id } })
+  },
+  // ==================== Recruiter Contacted Candidate Handlers ====================
+  async getContactedCandidateList(params?: {
+    encryptJobId?: string
+    geekName?: string
+    page?: number
+    pageSize?: number
+  }): Promise<{ data: RecruiterContactedCandidate[]; total: number }> {
+    const { encryptJobId, geekName, page = 1, pageSize = 20 } = params || {}
+    const repo = dataSource!.getRepository(RecruiterContactedCandidate)
+
+    const where: any = {}
+    if (encryptJobId) where.encryptJobId = encryptJobId
+    // Note: For geekName, we need to use Like query, which is not directly supported in find's where
+    // We'll use query builder for more complex queries
+
+    if (geekName) {
+      const qb = repo.createQueryBuilder('candidate')
+        .where('candidate.encryptJobId = :encryptJobId OR :encryptJobId IS NULL', { encryptJobId: encryptJobId || null })
+        .andWhere('candidate.geekName LIKE :geekName', { geekName: `%${geekName}%` })
+        .orderBy('candidate.createdAt', 'DESC')
+        .skip((page - 1) * pageSize)
+        .take(pageSize)
+
+      const [data, total] = await qb.getManyAndCount()
+      return { data, total, page, pageSize }
+    }
+
+    const [data, total] = await repo.findAndCount({
+      where: Object.keys(where).length > 0 ? where : undefined,
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize
+    })
+
+    return { data, total, page, pageSize }
+  },
+  async saveContactedCandidate({ candidate }: { candidate: Partial<RecruiterContactedCandidate> }): Promise<RecruiterContactedCandidate> {
+    const repo = dataSource!.getRepository(RecruiterContactedCandidate)
+    let entity: RecruiterContactedCandidate
+
+    if (candidate.id) {
+      entity = await repo.findOne({ where: { id: candidate.id } }) || new RecruiterContactedCandidate()
+    } else if (candidate.encryptGeekId && candidate.encryptJobId) {
+      entity = await repo.findOne({
+        where: {
+          encryptGeekId: candidate.encryptGeekId,
+          encryptJobId: candidate.encryptJobId
+        }
+      }) || new RecruiterContactedCandidate()
+    } else {
+      entity = new RecruiterContactedCandidate()
+    }
+
+    // If existing entity, increment reply count
+    if (entity.id) {
+      entity.replyCount = (entity.replyCount || 0) + 1
+      entity.lastReplyAt = new Date()
+    } else {
+      entity.replyCount = 1
+      entity.firstContactAt = new Date()
+      entity.lastReplyAt = new Date()
+    }
+
+    Object.assign(entity, candidate)
+    return await repo.save(entity)
+  },
+  async deleteContactedCandidate({ id }): Promise<void> {
+    const repo = dataSource!.getRepository(RecruiterContactedCandidate)
+    await repo.delete(id)
+  },
+  async getContactedCandidateById({ id }): Promise<RecruiterContactedCandidate | null> {
+    const repo = dataSource!.getRepository(RecruiterContactedCandidate)
+    return await repo.findOne({ where: { id } })
+  },
+  async getContactedCandidateCount(params?: { encryptJobId?: string }): Promise<number> {
+    const { encryptJobId } = params || {}
+    const repo = dataSource!.getRepository(RecruiterContactedCandidate)
+
+    const where: any = {}
+    if (encryptJobId) where.encryptJobId = encryptJobId
+
+    return await repo.count({ where: Object.keys(where).length > 0 ? where : undefined })
   }
 }
 

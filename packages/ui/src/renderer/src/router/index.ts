@@ -114,6 +114,13 @@ const routes: Array<RouteRecordRaw> = [
         }
       },
       {
+        path: 'ContactedCandidates',
+        component: () => import('@renderer/page/MainLayout/ContactedCandidates.vue'),
+        meta: {
+          title: '已回复'
+        }
+      },
+      {
         path: 'RecruiterAutoReply',
         component: () => import('@renderer/page/MainLayout/RecruiterAutoReply.vue'),
         meta: {

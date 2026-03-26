@@ -188,6 +188,69 @@
               />
             </el-form-item>
           </el-collapse-item>
+
+          <!-- 模版设置 -->
+          <el-collapse-item title="模版设置" name="templates">
+            <div class="template-section">
+              <!-- 全局模版 -->
+              <div class="template-group">
+                <div class="group-title">全局模版</div>
+                <div class="template-list">
+                  <div
+                    v-for="item in globalTemplates"
+                    :key="item.id"
+                    class="template-item"
+                    @click="openTemplateEditor(item)"
+                  >
+                    <span class="template-name">{{ item.name }}</span>
+                    <el-button type="primary" text size="small">编辑</el-button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 自定义模版 -->
+              <div class="template-group">
+                <div class="group-title">
+                  自定义模版
+                  <span class="limit-tip">(最多10个，当前{{ customTemplates.length }}/10)</span>
+                </div>
+                <div class="template-list">
+                  <div
+                    v-for="item in customTemplates"
+                    :key="item.id"
+                    class="template-item"
+                  >
+                    <span class="template-name" @click="openTemplateEditor(item)">{{ item.name }}</span>
+                    <div class="template-actions">
+                      <el-switch v-model="item.enabled" @change="saveTemplate(item)" />
+                      <el-button type="danger" text size="small" @click="handleDeleteTemplate(item.id)">删除</el-button>
+                    </div>
+                  </div>
+                </div>
+                <el-button
+                  v-if="customTemplates.length < 10"
+                  type="primary"
+                  plain
+                  @click="addCustomTemplate"
+                  class="add-template-btn"
+                >
+                  + 添加自定义模版
+                </el-button>
+              </div>
+
+              <!-- 导入导出 -->
+              <div class="template-actions-bar">
+                <el-button size="small" @click="exportTemplates">导出模版</el-button>
+                <el-upload
+                  :show-file-list="false"
+                  accept=".json"
+                  :before-upload="importTemplates"
+                >
+                  <el-button size="small">导入模版</el-button>
+                </el-upload>
+              </div>
+            </div>
+          </el-collapse-item>
         </el-collapse>
 
         <!-- 一键发送区域 -->
@@ -254,11 +317,49 @@
         </template>
       </RunningOverlay>
     </div>
+
+    <!-- 模版编辑对话框 -->
+    <el-dialog
+      v-model="templateEditorVisible"
+      :title="editingTemplate?.id ? '编辑模版' : '新建模版'"
+      width="600px"
+    >
+      <el-form label-width="80px">
+        <el-form-item label="模版名称">
+          <el-input v-model="editingTemplate.name" placeholder="请输入模版名称" />
+        </el-form-item>
+        <el-form-item label="模版内容">
+          <el-input
+            v-model="editingTemplate.content"
+            type="textarea"
+            :rows="5"
+            placeholder="请输入模版内容"
+            maxlength="500"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item label="可用变量">
+          <div class="variable-tips">
+            <el-tag size="small">{name}</el-tag> 候选人姓名（默认：您）
+            <el-tag size="small" style="margin-left: 12px">{jobName}</el-tag> 职位名称（默认：本职位）
+          </div>
+        </el-form-item>
+        <el-form-item label="预览效果">
+          <div class="preview-box">
+            {{ previewTemplateContent }}
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateEditorVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveEditingTemplate">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElForm, ElMessage, ElMessageBox } from 'element-plus'
 import RunningOverlay from '@renderer/features/RunningOverlay/index.vue'
 import { RUNNING_STATUS_ENUM } from '../../../../common/enums/auto-start-chat'
@@ -272,11 +373,23 @@ interface QuickReplyItem {
   order: number
 }
 
+interface RecruiterTemplate {
+  id?: number
+  encryptJobId?: string | null
+  templateType: string
+  name: string
+  content: string
+  enabled: boolean
+  sortOrder: number
+  createdAt?: Date
+  updatedAt?: Date
+}
+
 const formRef = ref<InstanceType<typeof ElForm> | null>(null)
 const runRecordId = ref<number | null>(null)
 const runningOverlayRef = ref<any>(null)
 const isStopButtonLoading = ref(false)
-const activeCollapse = ref(['basic', 'quickReply'])
+const activeCollapse = ref(['basic', 'quickReply', 'templates'])
 
 // 默认表单内容
 const getDefaultFormContent = () => ({
@@ -338,9 +451,34 @@ const getDefaultFormContent = () => ({
 
 const formContent = ref(getDefaultFormContent())
 
+// 模版相关状态
+const templateList = ref<RecruiterTemplate[]>([])
+const templateEditorVisible = ref(false)
+const editingTemplate = ref<Partial<RecruiterTemplate>>({
+  name: '',
+  content: '',
+  templateType: 'custom',
+  enabled: true
+})
+
 // 启用的快捷回复列表
 const enabledQuickReplyList = computed(() => {
   return formContent.value.quickReply.list.filter(item => item.enabled)
+})
+
+// 全局模版列表
+const globalTemplates = computed(() => {
+  return templateList.value.filter(t => !t.encryptJobId && ['initial', 'resume_received', 'reject'].includes(t.templateType))
+})
+
+// 自定义模版列表
+const customTemplates = computed(() => {
+  return templateList.value.filter(t => t.templateType === 'custom')
+})
+
+// 预览模版内容
+const previewTemplateContent = computed(() => {
+  return replaceTemplateVariables(editingTemplate.value.content || '')
 })
 
 // 加载配置
@@ -475,6 +613,213 @@ const handleStopButtonClick = async () => {
     isStopButtonLoading.value = false
   }
 }
+
+// ==================== 模版相关函数 ====================
+
+// 默认全局模版数据
+const defaultGlobalTemplates = [
+  {
+    templateType: 'initial',
+    name: '首次回复',
+    content: '您好，感谢您对我们公司的关注！我们会尽快查看您的简历，如有合适岗位会及时联系您。',
+    encryptJobId: null,
+    enabled: true,
+    sortOrder: 0
+  },
+  {
+    templateType: 'resume_received',
+    name: '收到简历',
+    content: '您好，已收到您的简历，我们会尽快进行评估。如果您的经历符合岗位要求，我们会主动联系您安排面试。',
+    encryptJobId: null,
+    enabled: true,
+    sortOrder: 1
+  },
+  {
+    templateType: 'reject',
+    name: '婉拒回复',
+    content: '感谢您对本公司岗位的关注！经过综合评估，您的经历暂时不太符合该岗位的要求。我们会保留您的简历，有合适机会会主动联系您。',
+    encryptJobId: null,
+    enabled: true,
+    sortOrder: 2
+  }
+]
+
+// 初始化默认模版
+const initDefaultTemplates = async () => {
+  for (const template of defaultGlobalTemplates) {
+    const existing = templateList.value.find(t => t.templateType === template.templateType && !t.encryptJobId)
+    if (!existing) {
+      await electron.ipcRenderer.invoke('recruiter-save-template', template)
+    }
+  }
+}
+
+// 加载模版列表
+const loadTemplates = async () => {
+  const result = await electron.ipcRenderer.invoke('recruiter-get-templates', {})
+  templateList.value = result?.data || []
+
+  // 初始化默认模版
+  await initDefaultTemplates()
+
+  // 重新加载以确保默认模版已添加
+  const newResult = await electron.ipcRenderer.invoke('recruiter-get-templates', {})
+  templateList.value = newResult?.data || []
+}
+
+// 变量替换
+const replaceTemplateVariables = (content: string) => {
+  return content
+    .replace(/{name}/g, '您')
+    .replace(/{jobName}/g, '本职位')
+}
+
+// 根据模版类型获取模版名称
+const getTemplateNameByType = (type: string): string => {
+  const nameMap: Record<string, string> = {
+    initial: '首次回复',
+    resume_received: '收到简历',
+    reject: '婉拒回复'
+  }
+  return nameMap[type] || type
+}
+
+// 打开模版编辑器
+const openTemplateEditor = (template?: RecruiterTemplate) => {
+  if (template) {
+    editingTemplate.value = { ...template }
+  } else {
+    editingTemplate.value = {
+      name: '',
+      content: '',
+      templateType: 'custom',
+      enabled: true,
+      sortOrder: customTemplates.value.length
+    }
+  }
+  templateEditorVisible.value = true
+}
+
+// 保存模版
+const saveTemplate = async (template: Partial<RecruiterTemplate>) => {
+  try {
+    await electron.ipcRenderer.invoke('recruiter-save-template', template)
+    await loadTemplates()
+  } catch (err) {
+    ElMessage.error('保存模版失败')
+  }
+}
+
+// 删除模版
+const handleDeleteTemplate = async (id: number) => {
+  try {
+    await ElMessageBox.confirm('确定删除该模版？', '提示', {
+      type: 'warning'
+    })
+    await electron.ipcRenderer.invoke('recruiter-delete-template', id)
+    await loadTemplates()
+    ElMessage.success('模版已删除')
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error('删除模版失败')
+    }
+  }
+}
+
+// 添加自定义模版
+const addCustomTemplate = () => {
+  openTemplateEditor()
+}
+
+// 保存编辑中的模版
+const saveEditingTemplate = async () => {
+  if (!editingTemplate.value.name?.trim()) {
+    ElMessage.error('请输入模版名称')
+    return
+  }
+  if (!editingTemplate.value.content?.trim()) {
+    ElMessage.error('请输入模版内容')
+    return
+  }
+
+  await saveTemplate(editingTemplate.value)
+  templateEditorVisible.value = false
+  ElMessage.success('模版保存成功')
+}
+
+// 导出模版
+const exportTemplates = () => {
+  const data = {
+    version: '1.0',
+    globalTemplates: {
+      initial: globalTemplates.value.find(t => t.templateType === 'initial')?.content || '',
+      resumeReceived: globalTemplates.value.find(t => t.templateType === 'resume_received')?.content || '',
+      reject: globalTemplates.value.find(t => t.templateType === 'reject')?.content || ''
+    },
+    customTemplates: customTemplates.value.map(t => ({
+      name: t.name,
+      content: t.content
+    }))
+  }
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `recruiter-templates-${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('模版导出成功')
+}
+
+// 导入模版
+const importTemplates = async (file: File) => {
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+
+    // 导入全局模版
+    if (data.globalTemplates) {
+      for (const [type, content] of Object.entries(data.globalTemplates)) {
+        if (content && typeof content === 'string') {
+          const templateType = type === 'resumeReceived' ? 'resume_received' : type
+          await electron.ipcRenderer.invoke('recruiter-save-template', {
+            templateType,
+            name: getTemplateNameByType(templateType),
+            content,
+            encryptJobId: null,
+            enabled: true
+          })
+        }
+      }
+    }
+
+    // 导入自定义模版
+    if (data.customTemplates && Array.isArray(data.customTemplates)) {
+      for (const custom of data.customTemplates) {
+        if (custom.name && custom.content) {
+          await electron.ipcRenderer.invoke('recruiter-save-template', {
+            templateType: 'custom',
+            name: custom.name,
+            content: custom.content,
+            enabled: true
+          })
+        }
+      }
+    }
+
+    await loadTemplates()
+    ElMessage.success('模版导入成功')
+  } catch (err) {
+    ElMessage.error('模版导入失败，请检查文件格式')
+  }
+  return false // 阻止upload默认行为
+}
+
+// 初始化加载模版
+onMounted(() => {
+  loadTemplates()
+})
 </script>
 
 <style lang="scss">
@@ -560,6 +905,91 @@ const handleStopButtonClick = async () => {
       color: #909399;
       margin: 0;
     }
+  }
+
+  // 模版设置样式
+  .template-section {
+    .template-group {
+      margin-bottom: 20px;
+
+      .group-title {
+        font-weight: 500;
+        margin-bottom: 12px;
+        color: #303133;
+
+        .limit-tip {
+          font-size: 12px;
+          color: #909399;
+          font-weight: normal;
+          margin-left: 8px;
+        }
+      }
+
+      .template-list {
+        .template-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px;
+          margin-bottom: 8px;
+          background: #fafafa;
+          border: 1px solid #e4e7ed;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: all 0.2s;
+
+          &:hover {
+            border-color: #409eff;
+            background: #f5f7fa;
+          }
+
+          .template-name {
+            flex: 1;
+            color: #303133;
+          }
+
+          .template-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+          }
+        }
+      }
+
+      .add-template-btn {
+        width: 100%;
+        margin-top: 8px;
+      }
+    }
+
+    .template-actions-bar {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e4e7ed;
+    }
+  }
+
+  // 模版编辑对话框样式
+  .variable-tips {
+    font-size: 12px;
+    color: #606266;
+
+    .el-tag {
+      margin-right: 4px;
+    }
+  }
+
+  .preview-box {
+    padding: 12px;
+    background: #f5f7fa;
+    border: 1px solid #e4e7ed;
+    border-radius: 4px;
+    min-height: 60px;
+    white-space: pre-wrap;
+    font-size: 14px;
+    color: #303133;
   }
 }
 </style>

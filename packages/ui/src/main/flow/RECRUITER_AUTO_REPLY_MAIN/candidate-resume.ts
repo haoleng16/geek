@@ -317,6 +317,7 @@ export async function getCandidateResumeFromDOM(page: Page): Promise<Partial<Can
       result.currentJob = geekData.position || geekData.jobTitle
       result.expectJob = geekData.expectJob
       result.expectSalary = geekData.expectSalary
+      result.expectCity = geekData.expectCity || geekData.city
       result.skills = geekData.skillTags || geekData.skills || []
     }
 
@@ -364,6 +365,14 @@ export async function getCandidateResumeFromDOM(page: Page): Promise<Partial<Can
         '.geek-info .skill-tag, .skill-list .tag, [class*="skill"] span'
       )
       result.skills = Array.from(skillEls).map(el => el.textContent?.trim()).filter(Boolean)
+    }
+
+    // 提取城市/地点
+    if (!result.expectCity) {
+      const cityEl = document.querySelector(
+        '.geek-info .city, .location, [class*="city"], [class*="location"]'
+      )
+      result.expectCity = cityEl?.textContent?.trim()
     }
 
     return result

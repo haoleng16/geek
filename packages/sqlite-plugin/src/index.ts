@@ -23,6 +23,8 @@ import { CandidateConversation } from './entity/CandidateConversation'
 import { CandidateResumeRecord } from './entity/CandidateResumeRecord'
 import { RecruiterProcessLog } from './entity/RecruiterProcessLog'
 import { RecruiterDailyStats } from './entity/RecruiterDailyStats'
+import { RecruiterTemplate } from './entity/RecruiterTemplate'
+import { RecruiterContactedCandidate } from './entity/RecruiterContactedCandidate'
 
 import {
   saveChatStartupRecord,
@@ -42,6 +44,8 @@ import { Init1000000000000 } from "./migrations/1000000000000-Init";
 import { AddJobSourceColumnForChatStartupLogAndMarkAsNotSuitLog1752380078526 } from "./migrations/1752380078526-AddJobSourceColumnForChatStartupLogAndMarkAsNotSuitLog";
 import { AddJobHireStatusTable1766466476822 } from "./migrations/1766466476822-AddJobHireStatusTable";
 import { AddRecruiterTables1777555555555 } from "./migrations/1777555555555-AddRecruiterTables";
+import { AddRecruiterTemplateTable1777666666666 } from "./migrations/1777666666666-AddRecruiterTemplateTable";
+import { AddRecruiterContactedCandidateTable1777777777777 } from "./migrations/1777777777777-AddRecruiterContactedCandidateTable";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -76,6 +80,8 @@ export function initDb(dbFilePath) {
       CandidateResumeRecord,
       RecruiterProcessLog,
       RecruiterDailyStats,
+      RecruiterTemplate,
+      RecruiterContactedCandidate,
     ],
     migrations: [
       Init1000000000000,
@@ -84,7 +90,9 @@ export function initDb(dbFilePath) {
       AddColumnForMarkAsNotSuitLog1746092370665,
       AddJobSourceColumnForChatStartupLogAndMarkAsNotSuitLog1752380078526,
       AddJobHireStatusTable1766466476822,
-      AddRecruiterTables1777555555555
+      AddRecruiterTables1777555555555,
+      AddRecruiterTemplateTable1777666666666,
+      AddRecruiterContactedCandidateTable1777777777777
     ],
     migrationsRun: true
   });

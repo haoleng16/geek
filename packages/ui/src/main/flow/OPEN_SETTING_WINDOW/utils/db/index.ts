@@ -185,3 +185,87 @@ export const getCandidateConversation = async (encryptGeekId: string, encryptJob
   })
   return res
 }
+
+// ==================== Recruiter Template DB Functions ====================
+
+export const getRecruiterTemplateList = async (params?: {
+  encryptJobId?: string
+  templateType?: string
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getRecruiterTemplateList',
+    ...params
+  })
+  return res
+}
+
+export const saveRecruiterTemplate = async (template: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecruiterTemplate',
+    template
+  })
+  return res
+}
+
+export const deleteRecruiterTemplate = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'deleteRecruiterTemplate',
+    id
+  })
+  return res
+}
+
+export const getRecruiterTemplateById = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'getRecruiterTemplateById',
+    id
+  })
+  return res
+}
+
+// ==================== Recruiter Contacted Candidate DB Functions ====================
+
+export const getContactedCandidateList = async (params?: {
+  encryptJobId?: string
+  geekName?: string
+  page?: number
+  pageSize?: number
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getContactedCandidateList',
+    ...params
+  })
+  return res
+}
+
+export const saveContactedCandidate = async (candidate: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveContactedCandidate',
+    candidate
+  })
+  return res
+}
+
+export const deleteContactedCandidate = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'deleteContactedCandidate',
+    id
+  })
+  return res
+}
+
+export const getContactedCandidateById = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'getContactedCandidateById',
+    id
+  })
+  return res
+}
+
+export const getContactedCandidateCount = async (params?: { encryptJobId?: string }) => {
+  const res = await createWorkerPromise({
+    type: 'getContactedCandidateCount',
+    ...params
+  })
+  return res
+}

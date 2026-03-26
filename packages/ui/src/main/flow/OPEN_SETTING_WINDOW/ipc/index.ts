@@ -711,4 +711,56 @@ export default function initIpc() {
     await writeConfigFile('boss.json', bossConfig)
     return true
   })
+
+  // ==================== 招聘者模版 IPC ====================
+
+  // 获取模版列表
+  ipcMain.handle('recruiter-get-templates', async (_, params) => {
+    const { getRecruiterTemplateList } = await import('../utils/db/index')
+    return await getRecruiterTemplateList(params)
+  })
+
+  // 保存模版
+  ipcMain.handle('recruiter-save-template', async (_, template) => {
+    const { saveRecruiterTemplate } = await import('../utils/db/index')
+    return await saveRecruiterTemplate(template)
+  })
+
+  // 删除模版
+  ipcMain.handle('recruiter-delete-template', async (_, id) => {
+    const { deleteRecruiterTemplate } = await import('../utils/db/index')
+    return await deleteRecruiterTemplate(id)
+  })
+
+  // 获取单个模版
+  ipcMain.handle('recruiter-get-template', async (_, id) => {
+    const { getRecruiterTemplateById } = await import('../utils/db/index')
+    return await getRecruiterTemplateById(id)
+  })
+
+  // ==================== 招聘端已回复联系人 IPC ====================
+
+  // 获取已回复联系人列表
+  ipcMain.handle('recruiter-get-contacted-candidates', async (_, params) => {
+    const { getContactedCandidateList } = await import('../utils/db/index')
+    return await getContactedCandidateList(params)
+  })
+
+  // 保存已回复联系人
+  ipcMain.handle('recruiter-save-contacted-candidate', async (_, candidate) => {
+    const { saveContactedCandidate } = await import('../utils/db/index')
+    return await saveContactedCandidate(candidate)
+  })
+
+  // 删除已回复联系人
+  ipcMain.handle('recruiter-delete-contacted-candidate', async (_, id) => {
+    const { deleteContactedCandidate } = await import('../utils/db/index')
+    return await deleteContactedCandidate(id)
+  })
+
+  // 获取已回复联系人数量
+  ipcMain.handle('recruiter-get-contacted-candidate-count', async (_, params) => {
+    const { getContactedCandidateCount } = await import('../utils/db/index')
+    return await getContactedCandidateCount(params)
+  })
 }

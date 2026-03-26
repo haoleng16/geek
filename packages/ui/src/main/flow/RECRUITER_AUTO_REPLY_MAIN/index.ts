@@ -14,6 +14,11 @@ import { getLastUsedAndAvailableBrowser } from '../DOWNLOAD_DEPENDENCIES/utils/b
 import { configWithBrowserAssistant } from '../../features/config-with-browser-assistant'
 import { writeStorageFile, readStorageFile, readConfigFile } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
 import { AUTO_CHAT_ERROR_EXIT_CODE } from '../../../common/enums/auto-start-chat'
+import { getCandidateResumeFromDOM } from './candidate-resume'
+import { initDb } from '@geekgeekrun/sqlite-plugin'
+import { getPublicDbFilePath } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
+import { RecruiterContactedCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterContactedCandidate'
+import type { DataSource } from 'typeorm'
 
 process.on('SIGTERM', () => {
   console.log('收到SIGTERM信号，正在退出')
@@ -61,6 +66,201 @@ function getReplyContent(): string {
 }
 
 let browser: null | Browser = null
+let dataSource: DataSource | null = null
+
+// 初始化数据库
+const dbInitPromise = initDb(getPublicDbFilePath())
+
+// 当前所在的Tab
+let currentTab: 'unread' | 'all' = 'all'
+
+// 点击Tab切换
+async function switchTab(page: any, tab: 'unread' | 'all'): Promise<void> {
+  if (currentTab === tab) {
+    console.log(`[switchTab] 已经在 ${tab} Tab，跳过切换`)
+    return
+  }
+
+  console.log(`[switchTab] 切换到 ${tab} Tab`)
+
+  const tabText = tab === 'unread' ? '未读' : '全部'
+
+  const clicked = await page.evaluate((text) => {
+    // 找到Tab元素
+    const tabs = document.querySelectorAll('.chat-user .tabs-item, .tab-item, [role="tab"]')
+    for (const tabEl of tabs) {
+      if (tabEl.textContent?.trim() === text) {
+        ;(tabEl as HTMLElement).click()
+        return true
+      }
+    }
+    return false
+  }, tabText)
+
+  console.log(`[switchTab] 点击结果: ${clicked}`)
+
+  await sleep(1500)
+  currentTab = tab
+
+  // 验证当前Tab状态
+  const currentTabState = await page.evaluate(() => {
+    const tabs = document.querySelectorAll('.chat-user .tabs-item, .tab-item, [role="tab"]')
+    const result: any = { tabs: [] }
+    for (const tabEl of tabs) {
+      result.tabs.push({
+        text: tabEl.textContent?.trim(),
+        className: tabEl.className,
+        isActive: tabEl.className.includes('active') || tabEl.className.includes('selected')
+      })
+    }
+    return result
+  })
+  console.log(`[switchTab] 当前Tab状态:`, JSON.stringify(currentTabState))
+}
+
+// 保存已回复联系人（兼容求职者端和招聘者端）
+async function saveContactedCandidate(
+  page: any,
+  targetChat: any,
+  jobName?: string
+): Promise<void> {
+  try {
+    console.log('[saveContactedCandidate] 开始保存联系人, targetChat:', JSON.stringify(targetChat))
+
+    const ds = await dbInitPromise
+    const repo = ds.getRepository(RecruiterContactedCandidate)
+
+    // 尝试从页面获取更多信息
+    const candidateInfo = await getCandidateResumeFromDOM(page)
+    console.log('[saveContactedCandidate] 从DOM获取的信息:', JSON.stringify(candidateInfo))
+
+    // 从页面获取联系人ID（兼容招聘端和求职者端）
+    const pageInfo = await page.evaluate(() => {
+      const result: any = {}
+
+      // 尝试从Vue组件获取
+      const geekInfoVue = document.querySelector('.geek-info')?.__vue__
+      const bossInfoVue = document.querySelector('.boss-info')?.__vue__
+      const chatRecordVue = document.querySelector('.chat-conversation .chat-record')?.__vue__
+      const chatUserVue = document.querySelector('.chat-user')?.__vue__
+
+      console.log('geekInfoVue:', geekInfoVue)
+      console.log('bossInfoVue:', bossInfoVue)
+      console.log('chatRecordVue:', chatRecordVue)
+      console.log('chatUserVue:', chatUserVue)
+
+      // 招聘端：获取候选人信息
+      if (geekInfoVue?.geek) {
+        result.geek = geekInfoVue.geek
+      }
+      if (chatRecordVue?.geek) {
+        result.geek = chatRecordVue.geek
+      }
+
+      // 求职者端：获取BOSS信息
+      if (bossInfoVue?.boss) {
+        result.boss = bossInfoVue.boss
+      }
+      if (chatRecordVue?.boss) {
+        result.boss = chatRecordVue.boss
+      }
+
+      if (chatUserVue) {
+        result.list = chatUserVue.list
+      }
+
+      // 尝试从右侧信息面板获取
+      const rightBox = document.querySelector('.right-box')
+      if (rightBox) {
+        const nameEl = rightBox.querySelector('.name, .geek-name, .boss-name, [class*="name"]')
+        const companyEl = rightBox.querySelector('.company, [class*="company"]')
+        const positionEl = rightBox.querySelector('.position, [class*="job"]')
+        const salaryEl = rightBox.querySelector('.salary, [class*="salary"]')
+
+        if (nameEl) result.domName = nameEl.textContent?.trim()
+        if (companyEl) result.domCompany = companyEl.textContent?.trim()
+        if (positionEl) result.domPosition = positionEl.textContent?.trim()
+        if (salaryEl) result.domSalary = salaryEl.textContent?.trim()
+      }
+
+      return result
+    })
+
+    console.log('[saveContactedCandidate] 从页面获取的完整信息:', JSON.stringify(pageInfo))
+
+    // 判断是招聘端还是求职者端
+    const isRecruiterMode = !!targetChat.encryptGeekId
+    const isJobSeekerMode = !!targetChat.encryptBossId
+
+    console.log('[saveContactedCandidate] 模式检测: isRecruiterMode=' + isRecruiterMode + ', isJobSeekerMode=' + isJobSeekerMode)
+
+    // 根据模式获取正确的ID
+    let encryptGeekId: string
+    let encryptJobId: string
+    let contactName: string
+    let companyName: string
+    let position: string
+
+    if (isRecruiterMode) {
+      // 招聘端：encryptGeekId是候选人ID
+      encryptGeekId = pageInfo.geek?.encryptGeekId || candidateInfo.encryptGeekId || targetChat.encryptGeekId || ''
+      encryptJobId = targetChat.encryptJobId || ''
+      contactName = candidateInfo.name || pageInfo.domName || pageInfo.geek?.name || targetChat.name || ''
+      companyName = candidateInfo.currentCompany || pageInfo.domCompany || pageInfo.geek?.company || targetChat.brandName || ''
+      position = candidateInfo.currentJob || pageInfo.domPosition || pageInfo.geek?.position || ''
+    } else {
+      // 求职者端：encryptBossId是招聘者ID，使用friendId作为唯一标识
+      encryptGeekId = pageInfo.boss?.encryptBossId || targetChat.encryptBossId || targetChat.friendId?.toString() || ''
+      encryptJobId = targetChat.encryptJobId || ''
+      contactName = pageInfo.domName || pageInfo.boss?.name || targetChat.name || ''
+      companyName = pageInfo.domCompany || pageInfo.boss?.company || targetChat.brandName || ''
+      position = pageInfo.domPosition || pageInfo.boss?.position || targetChat.title || ''
+    }
+
+    console.log('[saveContactedCandidate] encryptGeekId:', encryptGeekId, 'encryptJobId:', encryptJobId, 'contactName:', contactName)
+
+    if (!encryptGeekId) {
+      console.warn('[saveContactedCandidate] 缺少必要ID，跳过保存')
+      return
+    }
+
+    // 检查是否已存在（使用encryptGeekId作为唯一标识）
+    let entity = await repo.findOne({
+      where: {
+        encryptGeekId,
+        encryptJobId: encryptJobId || ''
+      }
+    })
+
+    if (entity) {
+      // 更新已有记录
+      entity.replyCount = (entity.replyCount || 0) + 1
+      entity.lastReplyAt = new Date()
+    } else {
+      // 创建新记录
+      entity = new RecruiterContactedCandidate()
+      entity.encryptGeekId = encryptGeekId
+      entity.encryptJobId = encryptJobId || ''
+      entity.jobName = jobName || targetChat.title || ''
+      entity.geekName = contactName
+      entity.companyName = companyName
+      entity.position = position
+      entity.salary = candidateInfo.expectSalary || pageInfo.domSalary || pageInfo.geek?.expectSalary || ''
+      entity.city = candidateInfo.expectCity || pageInfo.geek?.expectCity || ''
+      entity.degree = candidateInfo.degree || pageInfo.geek?.degree || ''
+      entity.workYears = candidateInfo.workYear || pageInfo.geek?.workYear || 0
+      entity.avatarUrl = candidateInfo.avatar || pageInfo.geek?.avatar || targetChat.avatar || ''
+      entity.replyCount = 1
+      entity.firstContactAt = new Date()
+      entity.lastReplyAt = new Date()
+    }
+
+    await repo.save(entity)
+    console.log('[saveContactedCandidate] 已保存联系人:', entity.geekName, 'ID:', entity.id)
+  } catch (err) {
+    console.error('[saveContactedCandidate] 保存联系人失败:', err)
+  }
+}
 
 async function storeStorage(page) {
   const [cookies, localStorage] = await Promise.all([
@@ -292,6 +492,14 @@ const mainLoop = async () => {
 
   let cursorToContinueFind = 0
 
+  // 先切换到未读Tab
+  currentTab = 'all' // 强制初始化为all，确保第一次switchTab会执行
+  await switchTab(pageMapByName.boss!, 'unread')
+
+  // 等待列表数据刷新
+  console.log('[mainLoop] 等待未读Tab数据刷新...')
+  await sleep(2000)
+
   // eslint-disable-next-line no-constant-condition
   while (true) {
     await pageMapByName.boss?.waitForFunction(() => {
@@ -304,18 +512,56 @@ const mainLoop = async () => {
       `
     )) as Array<ChatListItem>
 
+    console.log('[mainLoop] 消息列表数量:', friendListData?.length)
+
+    // 打印前3条消息的详细结构，帮助调试
+    if (friendListData && friendListData.length > 0) {
+      console.log('[mainLoop] 前3条消息的结构:')
+      for (let i = 0; i < Math.min(3, friendListData.length); i++) {
+        const item = friendListData[i]
+        console.log(`[mainLoop] 消息[${i}]:`, JSON.stringify({
+          name: item.name,
+          encryptGeekId: (item as any).encryptGeekId,
+          encryptBossId: (item as any).encryptBossId,
+          friendId: (item as any).friendId,
+          lastIsSelf: (item as any).lastIsSelf,
+          unreadCount: (item as any).unreadCount,
+          lastText: (item as any).lastText,
+          title: (item as any).title,
+          brandName: (item as any).brandName
+        }))
+      }
+    }
+
     const toCheckItemAtIndex = friendListData.findIndex((it, index) => {
-      return index >= cursorToContinueFind && !it.lastIsSelf && Number(it.unreadCount) > 0
+      const result = index >= cursorToContinueFind && !it.lastIsSelf && Number(it.unreadCount) > 0
+      if (index < 5) {
+        console.log(`[mainLoop] findIndex[${index}]: lastIsSelf=${(it as any).lastIsSelf}, unreadCount=${(it as any).unreadCount}, result=${result}`)
+      }
+      return result
     })
 
+    console.log('[mainLoop] toCheckItemAtIndex:', toCheckItemAtIndex, 'cursorToContinueFind:', cursorToContinueFind)
+
     if (toCheckItemAtIndex < 0) {
+      // 如果在未读Tab没有消息了，切换到全部Tab
+      if (currentTab === 'unread') {
+        console.log('[mainLoop] 未读Tab处理完毕，切换到全部Tab')
+        await switchTab(pageMapByName.boss!, 'all')
+        cursorToContinueFind = 0
+        continue
+      }
+
       const isFinished = await pageMapByName.boss!.evaluate(
         `(document.querySelector(
           '.main-wrap .chat-user .user-list-content div[role=tfoot] .finished'
           )?.textContent ?? '').includes('没有')`
       )
       if (isFinished) {
+        console.log('[mainLoop] 所有消息处理完毕，等待新消息...')
         cursorToContinueFind = 0
+        // 重新切换到未读Tab等待新消息
+        await switchTab(pageMapByName.boss!, 'unread')
         await pageMapByName.boss?.evaluate(() => {
           ;(() => {
             document
@@ -349,6 +595,7 @@ const mainLoop = async () => {
     await sleep(1200)
 
     const targetChat = friendListData[toCheckItemAtIndex]
+    console.log('[mainLoop] targetChat原始数据:', JSON.stringify(targetChat, null, 2))
     const targetElProxy = await (async () => {
       const jsHandle = (
         await pageMapByName.boss?.evaluateHandle((source) => {
@@ -423,8 +670,19 @@ const mainLoop = async () => {
     }
 
     const currentReplyContent = getReplyContent()
+    console.log('[mainLoop] 准备发送消息:', currentReplyContent?.substring(0, 50))
     await sendMessage(pageMapByName.boss!, currentReplyContent)
+    console.log('[mainLoop] 消息发送完成')
     await sleepWithRandomDelay(1500)
+
+    // 保存已回复联系人数据
+    console.log('[mainLoop] 开始保存已回复联系人数据...')
+    try {
+      await saveContactedCandidate(pageMapByName.boss!, targetChat as any, targetChat.title)
+      console.log('[mainLoop] 保存已回复联系人数据完成')
+    } catch (saveErr) {
+      console.error('[mainLoop] 保存已回复联系人数据失败:', saveErr)
+    }
 
     cursorToContinueFind += 1
     await sleep(cfg.scanIntervalSeconds * 1000)
@@ -522,6 +780,15 @@ export async function runEntry() {
   })
   process.env.PUPPETEER_EXECUTABLE_PATH = puppeteerExecutable.executablePath
   console.log('[runEntry] PUPPETEER_EXECUTABLE_PATH:', process.env.PUPPETEER_EXECUTABLE_PATH)
+
+  // 初始化数据库
+  console.log('[runEntry] 正在初始化数据库...')
+  try {
+    dataSource = await dbInitPromise
+    console.log('[runEntry] 数据库初始化成功')
+  } catch (dbErr) {
+    console.error('[runEntry] 数据库初始化失败:', dbErr)
+  }
 
   console.log('[runEntry] 开始执行 mainLoop...')
   while (true) {
