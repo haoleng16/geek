@@ -65,7 +65,10 @@
                 placeholder="自定义系统提示词，留空使用默认模板"
               />
             </el-form-item>
-            <el-button @click="resetPromptToDefault">重置为默认模板</el-button>
+            <div class="prompt-actions">
+              <el-button type="primary" @click="handleSavePrompt">保存提示词</el-button>
+              <el-button @click="resetPromptToDefault">重置为默认模板</el-button>
+            </div>
           </el-collapse-item>
         </el-collapse>
 
@@ -175,7 +178,7 @@ const runningOverlayRef = ref<any>(null)
 const isStopButtonLoading = ref(false)
 const isTestingApi = ref(false)
 const apiTestResult = ref<{ success: boolean; message: string } | null>(null)
-const activeCollapse = ref(['basic', 'company', 'job'])
+const activeCollapse = ref(['basic', 'company', 'job', 'prompt'])
 
 // 默认表单内容
 const getDefaultFormContent = () => ({
@@ -208,6 +211,16 @@ onMounted(() => {
 const resetPromptToDefault = () => {
   formContent.value.systemPrompt = DEFAULT_SYSTEM_PROMPT
   ElMessage.success('已重置为默认模板')
+}
+
+// 保存提示词配置
+const handleSavePrompt = async () => {
+  try {
+    await saveConfig()
+    ElMessage.success('提示词已保存')
+  } catch (err) {
+    ElMessage.error('保存失败')
+  }
 }
 
 // 保存配置
@@ -316,6 +329,12 @@ const handleTestApiConnection = async () => {
       font-size: 12px;
       color: #909399;
       margin-top: 4px;
+    }
+
+    .prompt-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 8px;
     }
   }
 
