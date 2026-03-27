@@ -29,6 +29,7 @@
         <el-form-item>
           <el-button type="primary" @click="handleSearch">搜索</el-button>
           <el-button @click="handleReset">重置</el-button>
+          <el-button @click="handleRefresh">刷新</el-button>
         </el-form-item>
       </el-form>
     </div>
@@ -91,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 
 interface SmartReplyRecord {
@@ -121,6 +122,7 @@ interface Session {
 const loading = ref(false)
 const tableData = ref<SmartReplyRecord[]>([])
 const sessions = ref<Session[]>([])
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const filters = reactive({
   sessionId: '',
@@ -196,6 +198,12 @@ const handleReset = () => {
   fetchData()
 }
 
+// 手动刷新
+const handleRefresh = () => {
+  fetchSessions()
+  fetchData()
+}
+
 // 分页大小改变
 const handleSizeChange = () => {
   pagination.page = 1
@@ -211,6 +219,19 @@ const handlePageChange = () => {
 onMounted(() => {
   fetchSessions()
   fetchData()
+  // 每5秒自动刷新数据
+  refreshTimer = setInterval(() => {
+    fetchData()
+    fetchSessions()
+  }, 5000)
+})
+
+// 清理定时器
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
 })
 </script>
 
