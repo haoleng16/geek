@@ -73,11 +73,6 @@
           {{ formatTime(row.lastReplyAt) }}
         </template>
       </el-table-column>
-      <el-table-column prop="createdAt" label="创建时间" width="180">
-        <template #default="{ row }">
-          {{ formatTime(row.createdAt) }}
-        </template>
-      </el-table-column>
     </el-table>
 
     <!-- 分页 -->

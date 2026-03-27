@@ -62,9 +62,10 @@ export async function incrementReplyCount(
   encryptGeekId: string
 ): Promise<void> {
   try {
+    const now = new Date().toISOString()
     await ds.query(
-      `UPDATE smart_reply_record SET replyCount = replyCount + 1, lastReplyAt = datetime('now', 'localtime') WHERE sessionId = ? AND encryptGeekId = ?`,
-      [sessionId, encryptGeekId]
+      `UPDATE smart_reply_record SET replyCount = replyCount + 1, lastReplyAt = ? WHERE sessionId = ? AND encryptGeekId = ?`,
+      [now, sessionId, encryptGeekId]
     )
   } catch (err) {
     console.error('[SessionManager] 增加回复次数失败:', err)
@@ -105,7 +106,7 @@ export async function getOrCreateRecord(
     const now = new Date().toISOString()
     await ds.query(
       `INSERT INTO smart_reply_record (sessionId, encryptGeekId, geekName, encryptJobId, jobName, degree, workYears, replyCount, firstReplyAt, lastReplyAt, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
       [
         sessionId,
         encryptGeekId,
@@ -114,6 +115,8 @@ export async function getOrCreateRecord(
         info?.jobName || '',
         info?.degree || '',
         info?.workYears || 0,
+        now,
+        now,
         now,
         now
       ]
@@ -146,19 +149,20 @@ export async function updateLastLlmReply(
   conversationHistory?: string
 ): Promise<void> {
   try {
+    const now = new Date().toISOString()
     if (conversationHistory) {
       await ds.query(
         `UPDATE smart_reply_record
-         SET lastLlmReply = ?, conversationHistory = ?, replyCount = replyCount + 1, lastReplyAt = datetime('now', 'localtime')
+         SET lastLlmReply = ?, conversationHistory = ?, replyCount = replyCount + 1, lastReplyAt = ?
          WHERE sessionId = ? AND encryptGeekId = ?`,
-        [reply, conversationHistory, sessionId, encryptGeekId]
+        [reply, conversationHistory, now, sessionId, encryptGeekId]
       )
     } else {
       await ds.query(
         `UPDATE smart_reply_record
-         SET lastLlmReply = ?, replyCount = replyCount + 1, lastReplyAt = datetime('now', 'localtime')
+         SET lastLlmReply = ?, replyCount = replyCount + 1, lastReplyAt = ?
          WHERE sessionId = ? AND encryptGeekId = ?`,
-        [reply, sessionId, encryptGeekId]
+        [reply, now, sessionId, encryptGeekId]
       )
     }
     console.log('[SessionManager] 更新回复成功, encryptGeekId:', encryptGeekId)
