@@ -159,8 +159,8 @@ const formatTime = (time: string) => {
 // 获取会话列表
 const fetchSessions = async () => {
   try {
-    const result = await electron.ipcRenderer.invoke('get-smart-reply-sessions')
-    sessions.value = result || []
+    const { data: res } = await electron.ipcRenderer.invoke('get-smart-reply-sessions')
+    sessions.value = res || []
   } catch (err) {
     console.error('获取会话列表失败:', err)
   }
@@ -170,15 +170,15 @@ const fetchSessions = async () => {
 const fetchData = async () => {
   loading.value = true
   try {
-    const result = await electron.ipcRenderer.invoke('get-smart-reply-records', {
+    const { data: res } = await electron.ipcRenderer.invoke('get-smart-reply-records', {
       sessionId: filters.sessionId,
       geekName: filters.geekName,
       page: pagination.page,
       pageSize: pagination.pageSize
     })
 
-    tableData.value = result?.data || []
-    pagination.total = result?.total || 0
+    tableData.value = res?.data || []
+    pagination.total = res?.total || 0
   } catch (err) {
     console.error('获取数据失败:', err)
     ElMessage.error('获取数据失败')
