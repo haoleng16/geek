@@ -16,6 +16,7 @@ import { RecruiterProcessLog } from '@geekgeekrun/sqlite-plugin/dist/entity/Recr
 import { RecruiterDailyStats } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterDailyStats'
 import { RecruiterTemplate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterTemplate'
 import { RecruiterContactedCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterContactedCandidate'
+import { SmartReplyRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/SmartReplyRecord'
 
 const dbInitPromise = initDb(getPublicDbFilePath())
 let dataSource: DataSource | null = null
@@ -264,27 +265,59 @@ const payloadHandler = {
   },
   // ==================== Recruiter Template Handlers ====================
   async getRecruiterTemplateList(params?: {
-    encryptJobId?: string
+    encryptJobId?: string | null
     templateType?: string
   }): Promise<RecruiterTemplate[]> {
     const { encryptJobId, templateType } = params || {}
-    const repo = dataSource!.getRepository(RecruiterTemplate)
 
-    const where: any = {}
-    if (encryptJobId !== undefined) where.encryptJobId = encryptJobId
-    if (templateType) where.templateType = templateType
+    // 使用原生 SQL 查询，避免 TypeORM IsNull 导致的打包问题
+    let sql = 'SELECT * FROM recruiter_template WHERE 1=1'
+    const sqlParams: any[] = []
 
-    return await repo.find({
-      where,
-      order: { sortOrder: 'ASC', createdAt: 'ASC' }
-    })
+    if (encryptJobId === null) {
+      // 查询全局模版 (encryptJobId IS NULL)
+      sql += ' AND encryptJobId IS NULL'
+    } else if (encryptJobId !== undefined) {
+      sql += ' AND encryptJobId = ?'
+      sqlParams.push(encryptJobId)
+    }
+
+    if (templateType) {
+      sql += ' AND templateType = ?'
+      sqlParams.push(templateType)
+    }
+
+    sql += ' ORDER BY sortOrder ASC, createdAt ASC'
+
+    const result = await dataSource!.query(sql, sqlParams)
+    return result
   },
   async saveRecruiterTemplate({ template }: { template: Partial<RecruiterTemplate> }): Promise<RecruiterTemplate> {
     const repo = dataSource!.getRepository(RecruiterTemplate)
     let entity: RecruiterTemplate
 
     if (template.id) {
+      // 有 id，直接通过 id 查找
       entity = await repo.findOne({ where: { id: template.id } }) || new RecruiterTemplate()
+    } else if (template.templateType && template.encryptJobId === null) {
+      // 全局模版：通过 templateType 和 encryptJobId IS NULL 查找（使用原生 SQL）
+      const result = await dataSource!.query(
+        'SELECT * FROM recruiter_template WHERE templateType = ? AND encryptJobId IS NULL LIMIT 1',
+        [template.templateType]
+      )
+      entity = result && result.length > 0 ? result[0] : new RecruiterTemplate()
+      // 需要转换成实体对象以便后续保存
+      if (entity && entity.id) {
+        entity = await repo.findOne({ where: { id: entity.id } }) || new RecruiterTemplate()
+      }
+    } else if (template.templateType && template.encryptJobId) {
+      // 职位模版：通过 templateType 和 encryptJobId 查找
+      entity = await repo.findOne({
+        where: {
+          templateType: template.templateType,
+          encryptJobId: template.encryptJobId
+        }
+      }) || new RecruiterTemplate()
     } else {
       entity = new RecruiterTemplate()
     }
@@ -382,6 +415,54 @@ const payloadHandler = {
     if (encryptJobId) where.encryptJobId = encryptJobId
 
     return await repo.count({ where: Object.keys(where).length > 0 ? where : undefined })
+  },
+  // ==================== Smart Reply Handlers ====================
+  async getSmartReplyRecords(params?: {
+    sessionId?: string
+    geekName?: string
+    page?: number
+    pageSize?: number
+  }): Promise<{ data: SmartReplyRecord[]; total: number }> {
+    const { sessionId, geekName, page = 1, pageSize = 20 } = params || {}
+    const repo = dataSource!.getRepository(SmartReplyRecord)
+
+    const where: any = {}
+    if (sessionId) where.sessionId = sessionId
+
+    if (geekName) {
+      const qb = repo.createQueryBuilder('record')
+        .where('record.sessionId = :sessionId OR :sessionId IS NULL', { sessionId: sessionId || null })
+        .andWhere('record.geekName LIKE :geekName', { geekName: `%${geekName}%` })
+        .orderBy('record.createdAt', 'DESC')
+        .skip((page - 1) * pageSize)
+        .take(pageSize)
+
+      const [data, total] = await qb.getManyAndCount()
+      return { data, total, page, pageSize }
+    }
+
+    const [data, total] = await repo.findAndCount({
+      where: Object.keys(where).length > 0 ? where : undefined,
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize
+    })
+
+    return { data, total, page, pageSize }
+  },
+  async getSmartReplySessions(): Promise<{ sessionId: string; sessionName: string; count: number }[]> {
+    const result = await dataSource!.query(`
+      SELECT sessionId, COUNT(*) as count, MIN(createdAt) as createdAt
+      FROM smart_reply_record
+      GROUP BY sessionId
+      ORDER BY createdAt DESC
+    `)
+
+    return result.map((row: any) => ({
+      sessionId: row.sessionId,
+      sessionName: `会话 ${row.sessionId.substring(0, 8)}`,
+      count: row.count
+    }))
   }
 }
 

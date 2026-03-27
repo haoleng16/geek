@@ -62,6 +62,11 @@ const runMode = commandlineArgs['mode']
       runEntry()
       break
     }
+    case 'smartReplyMain': {
+      const { runEntry } = await import('./flow/SMART_REPLY_MAIN/index')
+      runEntry()
+      break
+    }
     case 'launchDaemon': {
       await import('./flow/LAUNCH_DAEMON')
       break

@@ -103,6 +103,25 @@
           <QuestionFilled w-1em h-1em mr10px />
         </el-tooltip>
       </RouterLink>
+      <RouterLink to="./SmartReply">
+        智能回复
+        <el-tooltip placement="right" :enterable="false">
+          <template #content>
+            <div w-480px>
+              <div>通过大语言模型智能回复候选人消息</div>
+              <br />
+              <div>核心功能</div>
+              <ul m0 pl2em>
+                <li>根据公司简介、岗位说明智能回复</li>
+                <li>每个候选人每会话最多回复3次</li>
+                <li>支持自动发送/弹窗确认模式</li>
+                <li>敏感词检测，自动过滤不合适内容</li>
+              </ul>
+            </div>
+          </template>
+          <QuestionFilled w-1em h-1em mr10px />
+        </el-tooltip>
+      </RouterLink>
       <a href="javascript:void(0)" @click="handleClickLaunchBossLogin">
         编辑登录凭据<TopRight w-1em h-1em mr10px />
       </a>

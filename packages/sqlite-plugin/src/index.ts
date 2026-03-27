@@ -25,6 +25,7 @@ import { RecruiterProcessLog } from './entity/RecruiterProcessLog'
 import { RecruiterDailyStats } from './entity/RecruiterDailyStats'
 import { RecruiterTemplate } from './entity/RecruiterTemplate'
 import { RecruiterContactedCandidate } from './entity/RecruiterContactedCandidate'
+import { SmartReplyRecord } from './entity/SmartReplyRecord'
 
 import {
   saveChatStartupRecord,
@@ -46,6 +47,7 @@ import { AddJobHireStatusTable1766466476822 } from "./migrations/1766466476822-A
 import { AddRecruiterTables1777555555555 } from "./migrations/1777555555555-AddRecruiterTables";
 import { AddRecruiterTemplateTable1777666666666 } from "./migrations/1777666666666-AddRecruiterTemplateTable";
 import { AddRecruiterContactedCandidateTable1777777777777 } from "./migrations/1777777777777-AddRecruiterContactedCandidateTable";
+import { AddSmartReplyRecordTable1788888888888 } from "./migrations/1788888888888-AddSmartReplyRecordTable";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -82,6 +84,7 @@ export function initDb(dbFilePath) {
       RecruiterDailyStats,
       RecruiterTemplate,
       RecruiterContactedCandidate,
+      SmartReplyRecord,
     ],
     migrations: [
       Init1000000000000,
@@ -92,7 +95,8 @@ export function initDb(dbFilePath) {
       AddJobHireStatusTable1766466476822,
       AddRecruiterTables1777555555555,
       AddRecruiterTemplateTable1777666666666,
-      AddRecruiterContactedCandidateTable1777777777777
+      AddRecruiterContactedCandidateTable1777777777777,
+      AddSmartReplyRecordTable1788888888888
     ],
     migrationsRun: true
   });

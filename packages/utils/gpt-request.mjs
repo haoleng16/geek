@@ -4,7 +4,8 @@ export async function completes(
   {
     baseURL,
     apiKey,
-    model
+    model,
+    maxTokens
   },
   messages
 ) {
@@ -17,10 +18,13 @@ export async function completes(
     messages,
     model,
     frequency_penalty: 0,
-    max_tokens: 100,
+    max_tokens: maxTokens || 300,
     temperature: 0.1
   });
 
-  console.log(completion.choices[0].message.content);
+  console.log('[GPT-Request] 响应:', {
+    content: completion.choices[0].message.content,
+    usage: completion.usage
+  });
   return completion;
 }

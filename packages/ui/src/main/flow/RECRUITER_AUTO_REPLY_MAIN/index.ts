@@ -84,6 +84,52 @@ function getFirstAvailableTemplate(templates: Map<TemplateType, string>): string
   return ''
 }
 
+// 检查候选人是否已在已回复数据库中
+async function checkCandidateExists(
+  ds: DataSource,
+  encryptGeekId: string,
+  encryptJobId: string
+): Promise<boolean> {
+  try {
+    const result = await ds.query(
+      `SELECT id FROM recruiter_contacted_candidate WHERE encryptGeekId = ? AND encryptJobId = ? LIMIT 1`,
+      [encryptGeekId, encryptJobId]
+    )
+    return result && result.length > 0
+  } catch (err) {
+    console.error('[checkCandidateExists] 查询失败:', err)
+    return false
+  }
+}
+
+// 检查消息是否是简历类型
+function isResumeMessage(msg: any): boolean {
+  if (!msg) return false
+
+  // 方式1: 检查 messageType 是否为 dialog（包含简历、电话、地图等）
+  // BOSS直聘中发送简历通常 messageType === 'dialog'
+  if (msg.messageType === 'dialog') {
+    return true
+  }
+
+  // 方式2: 检查消息文本是否包含"简历"关键词
+  if (msg.text && typeof msg.text === 'string') {
+    const text = msg.text.toLowerCase()
+    if (text.includes('简历') || text.includes('附件简历')) {
+      return true
+    }
+  }
+
+  // 方式3: 检查是否有简历相关的标记
+  if (msg.dialog?.type !== undefined) {
+    // dialog.type 的某些值代表简历，常见值为: 0, 1, 2 等
+    // 根据BOSS直聘的实际数据，简历通常在 dialog.type 中
+    return true
+  }
+
+  return false
+}
+
 process.on('SIGTERM', () => {
   console.log('收到SIGTERM信号，正在退出')
   process.exit(0)
@@ -709,6 +755,19 @@ const mainLoop = async () => {
     // 获取全局模版
     const templates = await getGlobalTemplates(dataSource!)
 
+    // 检查候选人是否已在已回复数据库中
+    const encryptGeekId = (targetChat as any).encryptGeekId || ''
+    const encryptJobId = (targetChat as any).encryptJobId || ''
+    const candidateExists = await checkCandidateExists(dataSource!, encryptGeekId, encryptJobId)
+
+    console.log('[mainLoop] 候选人检查:', {
+      encryptGeekId,
+      encryptJobId,
+      candidateExists,
+      lastMsgType: lastMsg?.messageType,
+      lastMsgDialogType: lastMsg?.dialog?.type
+    })
+
     // 用于存储要发送的回复内容
     let replyContentToSend: string | null = null
 
@@ -723,15 +782,25 @@ const mainLoop = async () => {
           '停止任务'
         ]
 
-        // 预览内容：第一个有内容的模版
-        const previewContent = getFirstAvailableTemplate(templates) || getReplyContent()
+        // 根据候选人状态决定默认预览内容
+        let previewContent: string
+        if (!candidateExists) {
+          // 新候选人：预览首次回复模版
+          previewContent = templates.get('initial') || DEFAULT_TEMPLATES['initial']
+        } else if (isResumeMessage(lastMsg)) {
+          // 已回复且发了简历：预览收到简历模版
+          previewContent = templates.get('resume_received') || DEFAULT_TEMPLATES['resume_received']
+        } else {
+          // 已回复但不是简历：预览提示信息
+          previewContent = '（该候选人已回复过，且未发送简历，建议跳过）'
+        }
 
         const res = await dialog.showMessageBox({
           type: 'question',
-          message: `发现新消息：${targetChat?.name ?? '候选人'}`,
+          message: `发现新消息：${targetChat?.name ?? '候选人'}${candidateExists ? ' (已回复过)' : ''}`,
           detail: `是否发送快捷回复？\n\n${previewContent}`,
           buttons,
-          defaultId: 0,  // 默认选中"首次回复"
+          defaultId: candidateExists && isResumeMessage(lastMsg) ? 1 : 0,  // 已回复且是简历默认选中"收到简历"
           cancelId: 3    // ESC键对应"跳过"
         })
 
@@ -754,11 +823,26 @@ const mainLoop = async () => {
         // assist mode without sending; give user a little time to reply manually
         await sleep(15 * 1000)
         cursorToContinueFind += 1
+        await sleep(cfg.scanIntervalSeconds * 1000)
         continue
       }
     } else {
-      // 自动模式：使用默认模版（首次回复）
-      replyContentToSend = templates.get('initial') || DEFAULT_TEMPLATES['initial']
+      // 自动模式：根据候选人状态智能选择模版
+      if (!candidateExists) {
+        // 新候选人：使用首次回复模版
+        replyContentToSend = templates.get('initial') || DEFAULT_TEMPLATES['initial']
+        console.log('[mainLoop] 新候选人，使用首次回复模版')
+      } else if (isResumeMessage(lastMsg)) {
+        // 已回复且发了简历：使用收到简历模版
+        replyContentToSend = templates.get('resume_received') || DEFAULT_TEMPLATES['resume_received']
+        console.log('[mainLoop] 已回复候选人发送了简历，使用收到简历模版')
+      } else {
+        // 已回复但不是简历：跳过，不发送
+        console.log('[mainLoop] 已回复候选人未发送简历，跳过不发送')
+        cursorToContinueFind += 1
+        await sleep(cfg.scanIntervalSeconds * 1000)
+        continue
+      }
     }
 
     // 使用选择的模版内容发送

@@ -115,5 +115,14 @@
         "language": "zh"
       }
     }
+  },
+  "smartReply": {
+    "autoSend": false,
+    "confirmBeforeSend": true,
+    "scanIntervalSeconds": 5,
+    "maxReplyCount": 3,
+    "companyIntro": "",
+    "jobDescription": "",
+    "systemPrompt": ""
   }
 }

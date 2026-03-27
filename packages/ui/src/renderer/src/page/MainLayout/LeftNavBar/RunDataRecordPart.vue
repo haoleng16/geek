@@ -6,6 +6,7 @@
       <RouterLink to="./MarkAsNotSuitRecord">标记不合适记录</RouterLink>
       <RouterLink to="./JobLibrary">职位库</RouterLink>
       <RouterLink to="./ContactedCandidates">已回复</RouterLink>
+      <RouterLink to="./SmartReplyData">智能回复数据</RouterLink>
     </div>
   </div>
 </template>

@@ -188,6 +188,11 @@ export default function initIpc() {
       bossConfig.replyStrategy = payload.replyStrategy
     }
 
+    // 智能回复相关配置
+    if (hasOwn(payload, 'smartReply')) {
+      bossConfig.smartReply = payload.smartReply
+    }
+
     promiseArr.push(writeConfigFile('boss.json', bossConfig))
 
     if (hasOwn(payload, 'expectCompanies')) {
@@ -762,5 +767,67 @@ export default function initIpc() {
   ipcMain.handle('recruiter-get-contacted-candidate-count', async (_, params) => {
     const { getContactedCandidateCount } = await import('../utils/db/index')
     return await getContactedCandidateCount(params)
+  })
+
+  // ==================== 智能回复 IPC ====================
+
+  // 启动智能回复任务
+  ipcMain.handle('run-smart-reply', async () => {
+    const mode = 'smartReplyMain'
+    const { runRecordId } = await runCommon({ mode })
+    daemonEE.on('message', function handler(message) {
+      if (message.workerId !== mode) {
+        return
+      }
+      if (message.type === 'worker-exited') {
+        mainWindow?.webContents.send('worker-exited', message)
+      }
+    })
+    return { runRecordId }
+  })
+
+  // 停止智能回复任务
+  ipcMain.handle('stop-smart-reply', async () => {
+    mainWindow?.webContents.send('smart-reply-stopping')
+    const p = new Promise((resolve) => {
+      daemonEE.on('message', function handler(message) {
+        if (message.workerId !== 'smartReplyMain') {
+          return
+        }
+        if (message.type === 'worker-exited') {
+          daemonEE.off('message', handler)
+          resolve(undefined)
+        }
+      })
+    })
+    await sendToDaemon(
+      {
+        type: 'stop-worker',
+        workerId: 'smartReplyMain'
+      },
+      {
+        needCallback: true
+      }
+    )
+    await p
+    mainWindow?.webContents.send('smart-reply-stopped')
+  })
+
+  // 获取智能回复数据
+  ipcMain.handle('get-smart-reply-records', async (_, params) => {
+    const { getSmartReplyRecords } = await import('../utils/db/index')
+    return await getSmartReplyRecords(params)
+  })
+
+  // 获取智能回复会话列表
+  ipcMain.handle('get-smart-reply-sessions', async () => {
+    const { getSmartReplySessions } = await import('../utils/db/index')
+    return await getSmartReplySessions()
+  })
+
+  // 测试智能回复 API 连接
+  ipcMain.handle('test-smart-reply-api', async () => {
+    const { testLlmConnection } = await import('../../SMART_REPLY_MAIN/llm-reply')
+    return await testLlmConnection()
   })
 }

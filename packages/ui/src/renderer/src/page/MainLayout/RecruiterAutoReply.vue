@@ -656,15 +656,24 @@ const initDefaultTemplates = async () => {
 
 // 加载模版列表
 const loadTemplates = async () => {
-  const result = await electron.ipcRenderer.invoke('recruiter-get-templates', {})
-  templateList.value = result?.data || []
+  try {
+    console.log('[loadTemplates] 开始加载模版列表')
+    const result = await electron.ipcRenderer.invoke('recruiter-get-templates', {})
+    console.log('[loadTemplates] 查询结果:', result)
+    templateList.value = result?.data || []
+    console.log('[loadTemplates] 模版列表:', templateList.value)
 
-  // 初始化默认模版
-  await initDefaultTemplates()
+    // 初始化默认模版
+    await initDefaultTemplates()
 
-  // 重新加载以确保默认模版已添加
-  const newResult = await electron.ipcRenderer.invoke('recruiter-get-templates', {})
-  templateList.value = newResult?.data || []
+    // 重新加载以确保默认模版已添加
+    const newResult = await electron.ipcRenderer.invoke('recruiter-get-templates', {})
+    console.log('[loadTemplates] 重新查询结果:', newResult)
+    templateList.value = newResult?.data || []
+    console.log('[loadTemplates] 最终模版列表:', templateList.value)
+  } catch (err) {
+    console.error('[loadTemplates] 加载失败:', err)
+  }
 }
 
 // 变量替换
@@ -703,10 +712,17 @@ const openTemplateEditor = (template?: RecruiterTemplate) => {
 // 保存模版
 const saveTemplate = async (template: Partial<RecruiterTemplate>) => {
   try {
-    await electron.ipcRenderer.invoke('recruiter-save-template', template)
+    // 将 Vue Proxy 对象转换为普通对象，否则 Electron IPC 无法克隆
+    const plainTemplate = JSON.parse(JSON.stringify(template))
+    console.log('[saveTemplate] 开始保存模版:', plainTemplate)
+    const result = await electron.ipcRenderer.invoke('recruiter-save-template', plainTemplate)
+    console.log('[saveTemplate] 保存结果:', result)
     await loadTemplates()
+    console.log('[saveTemplate] loadTemplates 完成')
   } catch (err) {
+    console.error('[saveTemplate] 保存失败:', err)
     ElMessage.error('保存模版失败')
+    throw err // 重新抛出错误，让调用者知道失败了
   }
 }
 
@@ -742,9 +758,13 @@ const saveEditingTemplate = async () => {
     return
   }
 
-  await saveTemplate(editingTemplate.value)
-  templateEditorVisible.value = false
-  ElMessage.success('模版保存成功')
+  try {
+    await saveTemplate(editingTemplate.value)
+    templateEditorVisible.value = false
+    ElMessage.success('模版保存成功')
+  } catch (err) {
+    // saveTemplate 已经显示了错误消息，这里不需要再显示
+  }
 }
 
 // 导出模版

@@ -269,3 +269,25 @@ export const getContactedCandidateCount = async (params?: { encryptJobId?: strin
   })
   return res
 }
+
+// ==================== Smart Reply DB Functions ====================
+
+export const getSmartReplyRecords = async (params?: {
+  sessionId?: string
+  geekName?: string
+  page?: number
+  pageSize?: number
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getSmartReplyRecords',
+    ...params
+  })
+  return res
+}
+
+export const getSmartReplySessions = async () => {
+  const res = await createWorkerPromise({
+    type: 'getSmartReplySessions'
+  })
+  return res
+}

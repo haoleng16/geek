@@ -126,6 +126,20 @@ const routes: Array<RouteRecordRaw> = [
         meta: {
           title: '招聘端自动回复'
         }
+      },
+      {
+        path: 'SmartReply',
+        component: () => import('@renderer/page/MainLayout/SmartReply.vue'),
+        meta: {
+          title: '智能回复'
+        }
+      },
+      {
+        path: 'SmartReplyData',
+        component: () => import('@renderer/page/MainLayout/SmartReplyData.vue'),
+        meta: {
+          title: '智能回复数据'
+        }
       }
     ]
   },
