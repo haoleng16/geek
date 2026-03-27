@@ -418,49 +418,45 @@ const payloadHandler = {
   },
   // ==================== Smart Reply Handlers ====================
   async getSmartReplyRecords(params?: {
-    sessionId?: string
+    date?: string
     geekName?: string
     page?: number
     pageSize?: number
   }): Promise<{ data: SmartReplyRecord[]; total: number }> {
-    const { sessionId, geekName, page = 1, pageSize = 20 } = params || {}
+    const { date, geekName, page = 1, pageSize = 20 } = params || {}
     const repo = dataSource!.getRepository(SmartReplyRecord)
 
-    const where: any = {}
-    if (sessionId) where.sessionId = sessionId
+    const qb = repo.createQueryBuilder('record')
 
-    if (geekName) {
-      const qb = repo.createQueryBuilder('record')
-        .where('record.sessionId = :sessionId OR :sessionId IS NULL', { sessionId: sessionId || null })
-        .andWhere('record.geekName LIKE :geekName', { geekName: `%${geekName}%` })
-        .orderBy('record.createdAt', 'DESC')
-        .skip((page - 1) * pageSize)
-        .take(pageSize)
-
-      const [data, total] = await qb.getManyAndCount()
-      return { data, total, page, pageSize }
+    // 按日期筛选
+    if (date) {
+      qb.andWhere('date(record.createdAt) = :date', { date })
     }
 
-    const [data, total] = await repo.findAndCount({
-      where: Object.keys(where).length > 0 ? where : undefined,
-      order: { createdAt: 'DESC' },
-      skip: (page - 1) * pageSize,
-      take: pageSize
-    })
+    // 按姓名模糊搜索
+    if (geekName) {
+      qb.andWhere('record.geekName LIKE :geekName', { geekName: `%${geekName}%` })
+    }
 
+    qb.orderBy('record.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+
+    const [data, total] = await qb.getManyAndCount()
     return { data, total, page, pageSize }
   },
   async getSmartReplySessions(): Promise<{ sessionId: string; sessionName: string; count: number }[]> {
+    // 按天分组显示会话（因为现在按天统计回复次数）
     const result = await dataSource!.query(`
-      SELECT sessionId, COUNT(*) as count, MIN(createdAt) as createdAt
+      SELECT date(createdAt) as date, COUNT(*) as count
       FROM smart_reply_record
-      GROUP BY sessionId
-      ORDER BY createdAt DESC
+      GROUP BY date(createdAt)
+      ORDER BY date DESC
     `)
 
     return result.map((row: any) => ({
-      sessionId: row.sessionId,
-      sessionName: `会话 ${row.sessionId.substring(0, 8)}`,
+      sessionId: row.date,
+      sessionName: `${row.date} (${row.count}人)`,
       count: row.count
     }))
   }

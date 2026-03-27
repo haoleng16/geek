@@ -3,18 +3,18 @@
     <!-- 筛选区域 -->
     <div class="filter-section">
       <el-form :inline="true">
-        <el-form-item label="会话ID">
+        <el-form-item label="日期">
           <el-select
-            v-model="filters.sessionId"
-            placeholder="选择会话"
+            v-model="filters.date"
+            placeholder="选择日期"
             clearable
             @change="handleSearch"
           >
             <el-option
-              v-for="s in sessions"
-              :key="s.sessionId"
-              :label="s.sessionName"
-              :value="s.sessionId"
+              v-for="s in dateOptions"
+              :key="s.date"
+              :label="s.label"
+              :value="s.date"
             />
           </el-select>
         </el-form-item>
@@ -33,8 +33,12 @@
       </el-form>
     </div>
 
+    <!-- 空数据提示 -->
+    <el-empty v-if="!loading && tableData.length === 0" description="暂无数据，请先运行智能回复功能" />
+
     <!-- 数据表格 -->
     <el-table
+      v-else
       :data="tableData"
       v-loading="loading"
       stripe
@@ -48,10 +52,10 @@
           {{ row.workYears ? `${row.workYears}年` : '-' }}
         </template>
       </el-table-column>
-      <el-table-column prop="replyCount" label="回复次数" width="100">
+      <el-table-column prop="replyCount" label="今日回复次数" width="120">
         <template #default="{ row }">
           <el-tag :type="row.replyCount >= 3 ? 'danger' : 'success'">
-            {{ row.replyCount }}
+            {{ row.replyCount }}/3
           </el-tag>
         </template>
       </el-table-column>
@@ -77,7 +81,7 @@
     </el-table>
 
     <!-- 分页 -->
-    <div class="pagination-wrap">
+    <div v-if="tableData.length > 0" class="pagination-wrap">
       <el-pagination
         v-model:current-page="pagination.page"
         v-model:page-size="pagination.pageSize"
@@ -113,18 +117,18 @@ interface SmartReplyRecord {
   updatedAt: string
 }
 
-interface Session {
-  sessionId: string
-  sessionName: string
+interface DateOption {
+  date: string
+  label: string
   count: number
 }
 
 const loading = ref(false)
 const tableData = ref<SmartReplyRecord[]>([])
-const sessions = ref<Session[]>([])
+const dateOptions = ref<DateOption[]>([])
 
 const filters = reactive({
-  sessionId: '',
+  date: '',
   geekName: ''
 })
 
@@ -152,13 +156,13 @@ const formatTime = (time: string) => {
   }
 }
 
-// 获取会话列表
-const fetchSessions = async () => {
+// 获取日期选项列表
+const fetchDateOptions = async () => {
   try {
     const result = await electron.ipcRenderer.invoke('get-smart-reply-sessions')
-    sessions.value = result || []
+    dateOptions.value = result || []
   } catch (err) {
-    console.error('获取会话列表失败:', err)
+    console.error('获取日期列表失败:', err)
   }
 }
 
@@ -167,7 +171,7 @@ const fetchData = async () => {
   loading.value = true
   try {
     const result = await electron.ipcRenderer.invoke('get-smart-reply-records', {
-      sessionId: filters.sessionId,
+      date: filters.date,
       geekName: filters.geekName,
       page: pagination.page,
       pageSize: pagination.pageSize
@@ -191,7 +195,7 @@ const handleSearch = () => {
 
 // 重置
 const handleReset = () => {
-  filters.sessionId = ''
+  filters.date = ''
   filters.geekName = ''
   pagination.page = 1
   fetchData()
@@ -210,7 +214,7 @@ const handlePageChange = () => {
 
 // 初始化
 onMounted(() => {
-  fetchSessions()
+  fetchDateOptions()
   fetchData()
 })
 </script>

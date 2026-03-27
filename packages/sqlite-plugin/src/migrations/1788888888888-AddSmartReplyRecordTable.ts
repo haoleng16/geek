@@ -17,14 +17,21 @@ export class AddSmartReplyRecordTable1788888888888 implements MigrationInterface
         "conversationHistory" text,
         "firstReplyAt" datetime,
         "lastReplyAt" datetime,
-        "createdAt" datetime NOT NULL DEFAULT (datetime('now')),
-        "updatedAt" datetime NOT NULL DEFAULT (datetime('now'))
+        "createdAt" datetime NOT NULL DEFAULT (datetime('now', 'localtime')),
+        "updatedAt" datetime NOT NULL DEFAULT (datetime('now', 'localtime'))
       );
     `);
 
+    // 创建索引：按候选人和日期查询（用于按天统计回复次数）
     await queryRunner.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS "idx_smart_reply_record_unique"
-      ON "smart_reply_record" ("sessionId", "encryptGeekId");
+      CREATE INDEX IF NOT EXISTS "idx_smart_reply_record_geek_date"
+      ON "smart_reply_record" ("encryptGeekId", date(createdAt));
+    `);
+
+    // 创建索引：按候选人查询最后回复时间（用于统计当天回复次数）
+    await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "idx_smart_reply_record_geek_lastreply"
+      ON "smart_reply_record" ("encryptGeekId", date(lastReplyAt));
     `);
 
     await queryRunner.query(`
