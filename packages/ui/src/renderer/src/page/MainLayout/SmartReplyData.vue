@@ -3,18 +3,18 @@
     <!-- 筛选区域 -->
     <div class="filter-section">
       <el-form :inline="true">
-        <el-form-item label="日期">
+        <el-form-item label="会话">
           <el-select
-            v-model="filters.date"
-            placeholder="选择日期"
+            v-model="filters.sessionId"
+            placeholder="选择会话"
             clearable
             @change="handleSearch"
           >
             <el-option
-              v-for="s in dateOptions"
-              :key="s.date"
-              :label="s.label"
-              :value="s.date"
+              v-for="s in sessions"
+              :key="s.sessionId"
+              :label="s.sessionName"
+              :value="s.sessionId"
             />
           </el-select>
         </el-form-item>
@@ -52,7 +52,7 @@
           {{ row.workYears ? `${row.workYears}年` : '-' }}
         </template>
       </el-table-column>
-      <el-table-column prop="replyCount" label="今日回复次数" width="120">
+      <el-table-column prop="replyCount" label="累计回复次数" width="120">
         <template #default="{ row }">
           <el-tag :type="row.replyCount >= 3 ? 'danger' : 'success'">
             {{ row.replyCount }}/3
@@ -117,18 +117,18 @@ interface SmartReplyRecord {
   updatedAt: string
 }
 
-interface DateOption {
-  date: string
-  label: string
+interface Session {
+  sessionId: string
+  sessionName: string
   count: number
 }
 
 const loading = ref(false)
 const tableData = ref<SmartReplyRecord[]>([])
-const dateOptions = ref<DateOption[]>([])
+const sessions = ref<Session[]>([])
 
 const filters = reactive({
-  date: '',
+  sessionId: '',
   geekName: ''
 })
 
@@ -156,13 +156,13 @@ const formatTime = (time: string) => {
   }
 }
 
-// 获取日期选项列表
-const fetchDateOptions = async () => {
+// 获取会话列表
+const fetchSessions = async () => {
   try {
     const result = await electron.ipcRenderer.invoke('get-smart-reply-sessions')
-    dateOptions.value = result || []
+    sessions.value = result || []
   } catch (err) {
-    console.error('获取日期列表失败:', err)
+    console.error('获取会话列表失败:', err)
   }
 }
 
@@ -171,7 +171,7 @@ const fetchData = async () => {
   loading.value = true
   try {
     const result = await electron.ipcRenderer.invoke('get-smart-reply-records', {
-      date: filters.date,
+      sessionId: filters.sessionId,
       geekName: filters.geekName,
       page: pagination.page,
       pageSize: pagination.pageSize
@@ -195,7 +195,7 @@ const handleSearch = () => {
 
 // 重置
 const handleReset = () => {
-  filters.date = ''
+  filters.sessionId = ''
   filters.geekName = ''
   pagination.page = 1
   fetchData()
@@ -214,7 +214,7 @@ const handlePageChange = () => {
 
 // 初始化
 onMounted(() => {
-  fetchDateOptions()
+  fetchSessions()
   fetchData()
 })
 </script>

@@ -28,8 +28,8 @@ export function endSession(): void {
 }
 
 /**
- * 获取候选人当天的回复次数
- * 按自然天统计，每个候选人每天最多回复 maxReplyCount 次
+ * 获取候选人的累计回复次数
+ * 每个候选人总共最多回复 maxReplyCount 次（永久累计，不按天）
  */
 export async function getReplyCount(
   ds: DataSource,
@@ -37,17 +37,15 @@ export async function getReplyCount(
   encryptGeekId: string
 ): Promise<number> {
   try {
-    // 查询该候选人今天的回复次数（基于 encryptGeekId，不依赖 sessionId）
-    // 使用 date() 函数比较日期部分
+    // 查询该候选人的累计回复次数（基于 encryptGeekId，跨所有记录）
     const result = await ds.query(
       `SELECT COALESCE(SUM(replyCount), 0) as totalReplyCount
        FROM smart_reply_record
-       WHERE encryptGeekId = ?
-       AND date(lastReplyAt) = date('now', 'localtime')`,
+       WHERE encryptGeekId = ?`,
       [encryptGeekId]
     )
     const count = result?.[0]?.totalReplyCount || 0
-    console.log('[SessionManager] 候选人', encryptGeekId, '当天回复次数:', count)
+    console.log('[SessionManager] 候选人', encryptGeekId, '累计回复次数:', count)
     return count
   } catch (err) {
     console.error('[SessionManager] 获取回复次数失败:', err)
@@ -65,7 +63,7 @@ export async function incrementReplyCount(
 ): Promise<void> {
   try {
     await ds.query(
-      `UPDATE smart_reply_record SET replyCount = replyCount + 1, lastReplyAt = datetime('now') WHERE sessionId = ? AND encryptGeekId = ?`,
+      `UPDATE smart_reply_record SET replyCount = replyCount + 1, lastReplyAt = datetime('now', 'localtime') WHERE sessionId = ? AND encryptGeekId = ?`,
       [sessionId, encryptGeekId]
     )
   } catch (err) {
@@ -74,8 +72,8 @@ export async function incrementReplyCount(
 }
 
 /**
- * 获取或创建当天的记录
- * 每天每个候选人只有一条记录，replyCount 累加
+ * 获取或创建记录
+ * 每个候选人在每次会话中有一条记录，replyCount 累加
  */
 export async function getOrCreateRecord(
   ds: DataSource,
@@ -90,21 +88,20 @@ export async function getOrCreateRecord(
   }
 ): Promise<any> {
   try {
-    // 查找今天的记录（按 encryptGeekId 和当天日期）
+    // 查找当前会话中该候选人的记录
     const existing = await ds.query(
       `SELECT * FROM smart_reply_record
-       WHERE encryptGeekId = ?
-       AND date(createdAt) = date('now', 'localtime')
+       WHERE sessionId = ? AND encryptGeekId = ?
        LIMIT 1`,
-      [encryptGeekId]
+      [sessionId, encryptGeekId]
     )
 
     if (existing && existing.length > 0) {
-      console.log('[SessionManager] 找到今天的记录:', existing[0].id)
+      console.log('[SessionManager] 找到会话记录:', existing[0].id)
       return existing[0]
     }
 
-    // 创建今天的记录
+    // 创建新记录
     const now = new Date().toISOString()
     await ds.query(
       `INSERT INTO smart_reply_record (sessionId, encryptGeekId, geekName, encryptJobId, jobName, degree, workYears, replyCount, firstReplyAt, lastReplyAt, createdAt, updatedAt)
@@ -122,15 +119,14 @@ export async function getOrCreateRecord(
       ]
     )
 
-    console.log('[SessionManager] 创建今天的记录, encryptGeekId:', encryptGeekId)
+    console.log('[SessionManager] 创建新记录, encryptGeekId:', encryptGeekId)
 
     // 返回新创建的记录
     const newRecord = await ds.query(
       `SELECT * FROM smart_reply_record
-       WHERE encryptGeekId = ?
-       AND date(createdAt) = date('now', 'localtime')
+       WHERE sessionId = ? AND encryptGeekId = ?
        LIMIT 1`,
-      [encryptGeekId]
+      [sessionId, encryptGeekId]
     )
     return newRecord?.[0]
   } catch (err) {
@@ -140,7 +136,7 @@ export async function getOrCreateRecord(
 }
 
 /**
- * 更新最后回复内容（更新当天的记录）
+ * 更新最后回复内容
  */
 export async function updateLastLlmReply(
   ds: DataSource,
@@ -154,17 +150,15 @@ export async function updateLastLlmReply(
       await ds.query(
         `UPDATE smart_reply_record
          SET lastLlmReply = ?, conversationHistory = ?, replyCount = replyCount + 1, lastReplyAt = datetime('now', 'localtime')
-         WHERE encryptGeekId = ?
-         AND date(createdAt) = date('now', 'localtime')`,
-        [reply, conversationHistory, encryptGeekId]
+         WHERE sessionId = ? AND encryptGeekId = ?`,
+        [reply, conversationHistory, sessionId, encryptGeekId]
       )
     } else {
       await ds.query(
         `UPDATE smart_reply_record
          SET lastLlmReply = ?, replyCount = replyCount + 1, lastReplyAt = datetime('now', 'localtime')
-         WHERE encryptGeekId = ?
-         AND date(createdAt) = date('now', 'localtime')`,
-        [reply, encryptGeekId]
+         WHERE sessionId = ? AND encryptGeekId = ?`,
+        [reply, sessionId, encryptGeekId]
       )
     }
     console.log('[SessionManager] 更新回复成功, encryptGeekId:', encryptGeekId)

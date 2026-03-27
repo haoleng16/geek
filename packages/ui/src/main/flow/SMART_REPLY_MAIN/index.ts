@@ -22,6 +22,7 @@ import type { Browser } from 'puppeteer'
 import { startNewSession, getCurrentSessionId, getReplyCount, getOrCreateRecord, updateLastLlmReply } from './session-manager'
 import { containsSensitiveWord, isMessageTooShort } from './sensitive-words'
 import { generateSmartReply, type SmartReplyConfig } from './llm-reply'
+import { getCurrentChatGeekInfo } from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
 
 process.on('SIGTERM', () => {
   console.log('收到SIGTERM信号，正在退出')
@@ -410,13 +411,27 @@ const mainLoop = async () => {
       continue
     }
 
-    // 获取候选人信息
-    const encryptGeekId = (targetChat as any).encryptGeekId || ''
+    // 获取候选人信息（从页面 DOM 获取正确的 encryptGeekId）
+    const geekInfo = await getCurrentChatGeekInfo(pageMapByName.boss!)
+    const encryptGeekId = geekInfo?.encryptGeekId || ''
+    const geekName = geekInfo?.name || targetChat.name || ''
     const encryptJobId = (targetChat as any).encryptJobId || ''
     // 兼容不同的消息格式：可能是 text 或 content
     const candidateMessage = lastMsg.text || lastMsg.content || ''
 
-    console.log('[SmartReply MainLoop] 候选人消息:', candidateMessage.substring(0, 50))
+    console.log('[SmartReply MainLoop] 候选人信息:', {
+      encryptGeekId,
+      geekName,
+      message: candidateMessage.substring(0, 50)
+    })
+
+    // 如果获取不到 encryptGeekId，跳过
+    if (!encryptGeekId) {
+      console.log('[SmartReply MainLoop] 无法获取候选人ID，跳过')
+      cursorToContinueFind += 1
+      await sleep(cfg.scanIntervalSeconds * 1000)
+      continue
+    }
 
     // 边界检查
     if (isMessageTooShort(candidateMessage)) {
@@ -509,7 +524,7 @@ const mainLoop = async () => {
     console.log('[SmartReply MainLoop] 保存回复记录...')
     try {
       await getOrCreateRecord(dataSource!, sessionId, encryptGeekId, {
-        geekName: targetChat.name,
+        geekName,
         encryptJobId,
         jobName: (targetChat as any).title
       })

@@ -273,7 +273,7 @@ export const getContactedCandidateCount = async (params?: { encryptJobId?: strin
 // ==================== Smart Reply DB Functions ====================
 
 export const getSmartReplyRecords = async (params?: {
-  date?: string
+  sessionId?: string
   geekName?: string
   page?: number
   pageSize?: number

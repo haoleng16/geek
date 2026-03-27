@@ -418,19 +418,19 @@ const payloadHandler = {
   },
   // ==================== Smart Reply Handlers ====================
   async getSmartReplyRecords(params?: {
-    date?: string
+    sessionId?: string
     geekName?: string
     page?: number
     pageSize?: number
   }): Promise<{ data: SmartReplyRecord[]; total: number }> {
-    const { date, geekName, page = 1, pageSize = 20 } = params || {}
+    const { sessionId, geekName, page = 1, pageSize = 20 } = params || {}
     const repo = dataSource!.getRepository(SmartReplyRecord)
 
     const qb = repo.createQueryBuilder('record')
 
-    // 按日期筛选
-    if (date) {
-      qb.andWhere('date(record.createdAt) = :date', { date })
+    // 按会话筛选
+    if (sessionId) {
+      qb.andWhere('record.sessionId = :sessionId', { sessionId })
     }
 
     // 按姓名模糊搜索
@@ -446,19 +446,23 @@ const payloadHandler = {
     return { data, total, page, pageSize }
   },
   async getSmartReplySessions(): Promise<{ sessionId: string; sessionName: string; count: number }[]> {
-    // 按天分组显示会话（因为现在按天统计回复次数）
+    // 按会话分组显示
     const result = await dataSource!.query(`
-      SELECT date(createdAt) as date, COUNT(*) as count
+      SELECT sessionId, COUNT(*) as count, MIN(createdAt) as createdAt
       FROM smart_reply_record
-      GROUP BY date(createdAt)
-      ORDER BY date DESC
+      GROUP BY sessionId
+      ORDER BY createdAt DESC
     `)
 
-    return result.map((row: any) => ({
-      sessionId: row.date,
-      sessionName: `${row.date} (${row.count}人)`,
-      count: row.count
-    }))
+    return result.map((row: any) => {
+      const date = new Date(row.createdAt)
+      const dateStr = date.toLocaleDateString('zh-CN')
+      return {
+        sessionId: row.sessionId,
+        sessionName: `${dateStr} (${row.count}人)`,
+        count: row.count
+      }
+    })
   }
 }
 
