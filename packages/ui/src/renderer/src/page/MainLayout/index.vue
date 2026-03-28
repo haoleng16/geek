@@ -51,7 +51,7 @@
       </div>
     </div>
     <div class="router-view-wrap">
-      <RouterView v-slot="{ Component }" class="flex-1 of-hidden">
+      <RouterView v-slot="{ Component }" class="flex-1 of-auto">
         <KeepAlive>
           <component :is="Component" />
         </KeepAlive>
