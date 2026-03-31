@@ -9,7 +9,7 @@ import {
 import { setDomainLocalStorage } from '@geekgeekrun/utils/puppeteer/local-storage.mjs'
 
 const localStoragePageUrl = `https://www.zhipin.com/desktop/`
-const defaultChatUiUrl = `https://www.zhipin.com/web/geek/chat`
+const defaultChatUiUrl = `https://www.zhipin.com/web/chat/index`
 
 function getChatUiUrl() {
   const configuredUrl = String(readConfigFile('boss.json')?.smartReply?.chatUiUrl ?? '')

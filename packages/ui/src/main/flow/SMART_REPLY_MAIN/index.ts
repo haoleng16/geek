@@ -272,6 +272,26 @@ const mainLoop = async () => {
     }
   }
 
+  // 招聘端：点击左侧聊天菜单，确保进入聊天页面
+  console.log('[SmartReply MainLoop] 尝试点击聊天菜单...')
+  try {
+    const chatMenuClicked = await pageMapByName.boss!.evaluate(() => {
+      // 查找聊天菜单并点击
+      const chatMenu = document.querySelector('.menu-chat') as HTMLElement
+      if (chatMenu) {
+        chatMenu.click()
+        return true
+      }
+      return false
+    })
+    console.log('[SmartReply MainLoop] 聊天菜单点击结果:', chatMenuClicked)
+    if (chatMenuClicked) {
+      await sleep(2000) // 等待聊天列表加载
+    }
+  } catch (e) {
+    console.log('[SmartReply MainLoop] 点击聊天菜单失败:', e)
+  }
+
   const cfg = getSmartReplyConfig()
 
   // 检查配置是否完整
@@ -290,17 +310,213 @@ const mainLoop = async () => {
 
   let cursorToContinueFind = 0
 
+  // 等待页面完全加载
+  console.log('[SmartReply MainLoop] 等待页面完全加载...')
+  await sleep(3000)
+
+  // 等待页面内容加载完成（检查 body 长度）
+  console.log('[SmartReply MainLoop] 等待页面内容渲染...')
+  let bodyLength = 0
+  let waitCount = 0
+  while (bodyLength < 50000 && waitCount < 30) {
+    bodyLength = await pageMapByName.boss!.evaluate(() => document.body.innerHTML.length)
+    console.log('[SmartReply MainLoop] 页面内容长度:', bodyLength, '等待次数:', waitCount)
+    if (bodyLength < 50000) {
+      await sleep(2000)
+      waitCount++
+    }
+  }
+
+  if (bodyLength < 50000) {
+    console.log('[SmartReply MainLoop] 页面内容加载不完整，但继续执行')
+  } else {
+    console.log('[SmartReply MainLoop] 页面内容已加载完成')
+  }
+
+  // 等待网络请求完成
+  try {
+    await pageMapByName.boss!.waitForNetworkIdle({ idleTime: 2000, timeout: 15000 })
+    console.log('[SmartReply MainLoop] 网络请求已完成')
+  } catch (e) {
+    console.log('[SmartReply MainLoop] 等待网络空闲超时，继续执行')
+  }
+
+  // 检查并等待遮罩层消失
+  console.log('[SmartReply MainLoop] 检查遮罩层...')
+  let hasOverlay = true
+  let overlayCheckCount = 0
+  while (hasOverlay && overlayCheckCount < 5) {
+    const overlayCheck = await pageMapByName.boss!.evaluate(() => {
+      const overlays = [...document.querySelectorAll('div')].filter(el => {
+        const style = el.getAttribute('style') || ''
+        return style.includes('position:fixed') &&
+               style.includes('z-index') &&
+               parseInt(style.match(/z-index:\s*(\d+)/)?.[1] || '0') >= 1000 &&
+               !style.includes('pointer-events:none')
+      })
+      return {
+        hasBlockingOverlay: overlays.length > 0,
+        overlayCount: overlays.length,
+        firstOverlayStyle: overlays[0]?.getAttribute('style')?.substring(0, 150) || null
+      }
+    })
+    console.log('[SmartReply MainLoop] 遮罩层检查:', JSON.stringify(overlayCheck))
+    hasOverlay = overlayCheck.hasBlockingOverlay
+    if (hasOverlay) {
+      overlayCheckCount++
+      await sleep(2000)
+      console.log('[SmartReply MainLoop] 等待遮罩层消失...', overlayCheckCount)
+    }
+  }
+
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    await pageMapByName.boss?.waitForFunction(() => {
-      return Array.isArray(document.querySelector('.main-wrap .chat-user')?.__vue__?.list)
-    })
+    // 先检查页面状态，帮助调试
+    console.log('[SmartReply MainLoop] 检查页面状态...')
+    try {
+      const pageState = await pageMapByName.boss!.evaluate(() => {
+        const result: any = {
+          url: location.href,
+          hasChatUser: !!document.querySelector('.chat-user'),
+          hasItemFriend: !!document.querySelector('.item-friend'),
+          itemFriendCount: document.querySelectorAll('.item-friend').length,
+          bodyLength: document.body.innerHTML.length
+        }
+        return result
+      })
+      console.log('[SmartReply MainLoop] 页面状态:', JSON.stringify(pageState))
+    } catch (e) {
+      console.error('[SmartReply MainLoop] 检查页面状态失败:', e)
+    }
 
-    const friendListData = (await pageMapByName.boss!.evaluate(
-      `
-        document.querySelector('.main-wrap .chat-user')?.__vue__?.list
-      `
-    )) as Array<ChatListItem>
+    // 招聘端：等待聊天列表元素出现（无限等待，不自动退出）
+    console.log('[SmartReply MainLoop] 等待聊天列表元素...')
+    while (true) {
+      const pageDebugInfo = await pageMapByName.boss!.evaluate(() => {
+        // 检查 .user-list 内的真正的聊天项元素
+        const geekItems = document.querySelectorAll('.geek-item, .geek-item-wrap, [role="listitem"]')
+
+        const geekItemsDebug = [...geekItems].slice(0, 20).map(el => {
+          // 找到 .geek-item 元素（可能是 el 本身或其子元素）
+          const geekItem = el.classList.contains('geek-item') ? el : el.querySelector('.geek-item') || el
+          const geekItemWrap = el.classList.contains('geek-item-wrap') ? el : el.querySelector('.geek-item-wrap') || el.closest('.geek-item-wrap')
+
+          return {
+            className: el.className,
+            role: el.getAttribute('role'),
+            keyAttr: el.getAttribute('key') || geekItem?.getAttribute('data-id'),
+            hasVue: !!el.__vue__,
+            hasGeekItemVue: !!geekItem?.__vue__,
+            textPreview: geekItem?.innerText?.substring(0, 100) || el.innerText?.substring(0, 100) || null,
+            // 检查 Vue props
+            vueProps: geekItem?.__vue__ ? Object.keys(geekItem.__vue__._props || geekItem.__vue__.$props || {}).slice(0, 15) : []
+          }
+        })
+
+        // 检查 [role="group"] 内部结构（这是虚拟滚动的容器）
+        const roleGroup = document.querySelector('[role="group"]')
+        const roleGroupDebug = roleGroup ? {
+          childCount: roleGroup.children.length,
+          children: [...roleGroup.children].slice(0, 10).map(el => ({
+            className: el.className,
+            role: el.getAttribute('role'),
+            keyAttr: el.getAttribute('key'),
+            textPreview: el.innerText?.substring(0, 80) || null
+          }))
+        } : null
+
+        return {
+          geekItemsCount: geekItems.length,
+          geekItemsDebug,
+          roleGroupDebug,
+          url: location.href
+        }
+      })
+      console.log('[SmartReply MainLoop] 页面调试信息:', JSON.stringify(pageDebugInfo, null, 2))
+
+      // 检查是否有聊天项
+      if (pageDebugInfo.geekItemsCount > 0) {
+        console.log('[SmartReply MainLoop] 找到聊天项元素，数量:', pageDebugInfo.geekItemsCount)
+        break
+      }
+
+      await sleep(3000)
+      console.log('[SmartReply MainLoop] 继续等待...')
+    }
+
+    // 招聘端：从 .geek-item 获取聊天列表数据
+    const friendListData = (await pageMapByName.boss!.evaluate(() => {
+      // 获取所有聊天项（只取 role="listitem" 的元素，避免重复）
+      const geekItems = document.querySelectorAll('[role="listitem"]')
+
+      console.log('[SmartReply] 找到聊天项数量:', geekItems.length)
+
+      return [...geekItems].map(el => {
+        // 找到 .geek-item 元素
+        const geekItem = el.querySelector('.geek-item') || el
+
+        // 从 DOM 文本提取信息
+        const textContent = geekItem?.innerText || el.innerText || ''
+        const textLines = textContent.split('\n').filter(line => line.trim())
+
+        // 解析文本格式
+        // 格式1（有未读数）: "1\n11:24\n刘毛印\nAI自动化开发程序员\n您好..."
+        // 格式2（无未读数）: "09:53\n张博翔\nAI自动化开发程序员\n您好..."
+        let name = ''
+        let time = ''
+        let lastText = ''
+        let unreadCount = 0
+        let jobName = ''
+
+        if (textLines.length >= 4) {
+          const firstLine = textLines[0]
+          const secondLine = textLines[1]
+
+          // 判断第一行是否是未读数（纯数字）
+          if (/^\d+$/.test(firstLine) && textLines.length >= 5) {
+            // 格式1：有未读数
+            unreadCount = parseInt(firstLine) || 0
+            time = secondLine || ''
+            name = textLines[2] || ''
+            jobName = textLines[3] || ''
+            lastText = textLines.slice(4).join('\n') || ''
+          } else {
+            // 格式2：无未读数
+            time = firstLine || ''
+            name = textLines[1] || ''
+            jobName = textLines[2] || ''
+            lastText = textLines.slice(3).join('\n') || ''
+          }
+        }
+
+        // 从 key/data-id 属性获取 ID
+        const keyId = el.getAttribute('key') || geekItem?.getAttribute('data-id') || ''
+
+        // 尝试从 Vue 组件获取数据
+        const vue = geekItem.__vue__ || el.__vue__
+        const props = vue?._props || vue?.$props || vue?.props || {}
+        const data = props.geek || props.item || props.message || props.user || props.data || props.row || {}
+
+        // 从 DOM 结构提取头像
+        const avatarEl = geekItem?.querySelector('.figure img, .avatar img, img')
+
+        return {
+          name: name || data.name || data.geekName || data.fromName || '',
+          encryptGeekId: keyId || data.encryptGeekId || data.geekId || data.securityId || '',
+          encryptBossId: data.bossId || data.encryptBossId || '',
+          unreadCount: unreadCount || data.unreadCount || data.newMsgCount || 0,
+          lastIsSelf: data.isSelf === true || data.lastIsSelf === true,
+          lastText: lastText || data.lastText || data.text || '',
+          avatar: data.avatar || data.fromAvatar || avatarEl?.src || '',
+          time: time || data.time || '',
+          jobName: jobName || data.jobName || '',
+          mid: data.mid || '',
+          _rawData: data,
+          _className: el.className,
+          _textContent: textContent.substring(0, 200)
+        }
+      })
+    })) as Array<ChatListItem>
 
     console.log('[SmartReply MainLoop] 消息列表数量:', friendListData?.length)
 
@@ -312,69 +528,136 @@ const mainLoop = async () => {
     console.log('[SmartReply MainLoop] toCheckItemAtIndex:', toCheckItemAtIndex, 'cursorToContinueFind:', cursorToContinueFind)
 
     if (toCheckItemAtIndex < 0) {
-      const isFinished = await pageMapByName.boss!.evaluate(
-        `(document.querySelector(
-          '.main-wrap .chat-user .user-list-content div[role=tfoot] .finished'
-          )?.textContent ?? '').includes('没有')`
-      )
-      if (isFinished) {
-        console.log('[SmartReply MainLoop] 所有消息处理完毕，等待新消息...')
-        cursorToContinueFind = 0
-        await pageMapByName.boss?.evaluate(() => {
-          ;(() => {
-            document
-              .querySelector('.chat-content .user-list .user-list-content')
-              ?.__vue__.scrollToIndex(0)
-          })()
-        })
-        await sleep(cfg.scanIntervalSeconds * 1000)
-      } else {
-        cursorToContinueFind = friendListData.length - 1
-        await pageMapByName.boss?.evaluate(() => {
-          ;(() => {
-            document
-              .querySelector('.chat-content .user-list .user-list-content')
-              ?.__vue__.scrollToBottom()
-          })()
-        })
-        await sleep(3000)
-      }
+      // 招聘端：暂时简化处理，等待新消息
+      console.log('[SmartReply MainLoop] 所有消息处理完毕，等待新消息...')
+      cursorToContinueFind = 0
+      await sleep(cfg.scanIntervalSeconds * 1000)
       continue
     }
 
     cursorToContinueFind = toCheckItemAtIndex
-    await pageMapByName.boss?.evaluate((toCheckItemAtIndex) => {
-      ;(() => {
-        document
-          .querySelector('.chat-content .user-list .user-list-content')
-          ?.__vue__.scrollToIndex(toCheckItemAtIndex)
-      })()
-    }, toCheckItemAtIndex)
-    await sleep(1200)
 
     const targetChat = friendListData[toCheckItemAtIndex]
     console.log('[SmartReply MainLoop] targetChat:', JSON.stringify({
       name: targetChat.name,
       encryptGeekId: (targetChat as any).encryptGeekId,
-      title: (targetChat as any).title
+      lastText: (targetChat as any).lastText
     }))
 
-    const targetElProxy = await (async () => {
-      const jsHandle = (
-        await pageMapByName.boss?.evaluateHandle((source) => {
-          const jobLiEls = document.querySelectorAll(
-            '.main-wrap .chat-user .user-list-content ul[role=group] li[role=listitem]'
-          )
-          return (
-            [...jobLiEls].find((it) => it.__vue__?.source?.encryptJobId === source.encryptJobId) ??
-            [...jobLiEls].find((it) => it.__vue__?.source?.friendId === source.friendId)
-          )
-        }, targetChat)
-      )?.asElement()
-      return jsHandle
-    })()
+    // 招聘端：点击对应的聊天项
+    console.log('[SmartReply MainLoop] 准备点击聊天项，index:', toCheckItemAtIndex)
+    const clickResult = await pageMapByName.boss?.evaluate((index) => {
+      const items = document.querySelectorAll('[role="listitem"]')
+      console.log('[SmartReply] 找到聊天项数量:', items.length, '准备点击 index:', index)
+      if (items[index]) {
+        // 先检查元素是否可见
+        const rect = items[index].getBoundingClientRect()
+        console.log('[SmartReply] 元素位置:', rect.x, rect.y, rect.width, rect.height)
 
-    await targetElProxy?.click()
+        // 找到 .geek-item 元素并点击
+        const geekItem = items[index].querySelector('.geek-item')
+        if (geekItem) {
+          console.log('[SmartReply] 找到 .geek-item，点击它')
+          ;(geekItem as HTMLElement).click()
+          return { clicked: true, target: 'geek-item', text: geekItem.textContent?.substring(0, 50) }
+        }
+
+        ;(items[index] as HTMLElement).click()
+        return { clicked: true, target: 'listitem', text: items[index].textContent?.substring(0, 50) }
+      }
+      return { clicked: false }
+    }, toCheckItemAtIndex)
+    console.log('[SmartReply MainLoop] 点击结果:', JSON.stringify(clickResult))
+
+    // 等待聊天数据加载
+    console.log('[SmartReply MainLoop] 等待聊天数据加载...')
+    await sleep(2000)
+
+    // 等待 conversation-no-data 消失或消息列表出现
+    let waitCount = 0
+    while (waitCount < 10) {
+      const dataLoaded = await pageMapByName.boss?.evaluate(() => {
+        const noData = document.querySelector('.conversation-no-data')
+        const chatConversation = document.querySelector('.chat-conversation')
+        const hasMessages = chatConversation?.innerHTML?.includes('您好') ||
+                           chatConversation?.innerHTML?.includes('你好') ||
+                           chatConversation?.innerHTML?.includes('沟通')
+
+        return {
+          hasNoData: !!noData,
+          hasMessages,
+          conversationHTMLLength: chatConversation?.innerHTML?.length || 0
+        }
+      })
+
+      console.log('[SmartReply MainLoop] 数据加载状态:', JSON.stringify(dataLoaded))
+
+      if (!dataLoaded?.hasNoData || dataLoaded?.hasMessages) {
+        console.log('[SmartReply MainLoop] 聊天数据已加载')
+        break
+      }
+
+      waitCount++
+      await sleep(1000)
+    }
+
+    // 检查右侧聊天区域状态
+    const chatAreaDebug = await pageMapByName.boss?.evaluate(() => {
+      const chatConversation = document.querySelector('.chat-conversation')
+      if (!chatConversation || !chatConversation.__vue__) {
+        return { found: false }
+      }
+
+      const vue = chatConversation.__vue__
+
+      // 检查 list$ 的内容
+      const list$ = vue.list$
+      console.log('[SmartReply] list$ 类型:', typeof list$, '是否数组:', Array.isArray(list$), '长度:', list$?.length)
+
+      // 打印 list$ 的第一项（如果有）
+      if (Array.isArray(list$) && list$.length > 0) {
+        console.log('[SmartReply] list$[0]:', JSON.stringify(list$[0]))
+        return {
+          found: true,
+          listLength: list$.length,
+          firstItem: list$[0],
+          listKeys: list$.length > 0 ? Object.keys(list$[0]) : []
+        }
+      }
+
+      // 如果 list$ 不是数组或者是空的，检查其他属性
+      const allKeys = Object.keys(vue).filter(k => !k.startsWith('_') && !k.startsWith('$') && !k.startsWith('handle'))
+      console.log('[SmartReply] Vue 所有属性:', allKeys)
+
+      // 检查 $data
+      if (vue.$data) {
+        const dataKeys = Object.keys(vue.$data)
+        console.log('[SmartReply] $data 属性:', dataKeys)
+
+        for (const key of dataKeys) {
+          const val = vue.$data[key]
+          if (Array.isArray(val) && val.length > 0) {
+            console.log('[SmartReply] 在 $data.' + key + ' 找到数组，长度:', val.length, '第一项:', JSON.stringify(val[0]).substring(0, 200))
+          }
+        }
+      }
+
+      // 检查 innerHTML 中是否有消息内容
+      const innerHTML = chatConversation.innerHTML
+      const hasMessageContent = innerHTML.includes('您好') || innerHTML.includes('你好') || innerHTML.includes('沟通')
+      console.log('[SmartReply] innerHTML 是否包含消息内容:', hasMessageContent)
+      console.log('[SmartReply] innerHTML 预览:', innerHTML.substring(0, 500))
+
+      return {
+        found: true,
+        listLength: Array.isArray(list$) ? list$.length : 0,
+        allKeys,
+        hasMessageContent,
+        innerHTMLPreview: innerHTML.substring(0, 500)
+      }
+    })
+    console.log('[SmartReply MainLoop] 聊天区域调试:', JSON.stringify(chatAreaDebug, null, 2))
+
     try {
       await pageMapByName.boss!.waitForResponse(
         (response) => {
@@ -382,19 +665,66 @@ const mainLoop = async () => {
           return url.startsWith('https://www.zhipin.com/wapi/zpchat/') && url.includes('/historyMsg')
         },
         {
-          timeout: 30 * 1000
+          timeout: 15 * 1000
         }
       )
-    } catch {
-      // ignore response wait timeout, try to continue with DOM data
+      console.log('[SmartReply MainLoop] 收到 historyMsg 响应')
+    } catch (e) {
+      console.log('[SmartReply MainLoop] 等待 historyMsg 响应超时')
     }
 
     await sleepWithRandomDelay(1000)
 
+    // 招聘端：获取聊天记录（适配招聘端的选择器）
     const historyMessageList =
       (
         await pageMapByName.boss?.evaluate(() => {
-          return document.querySelector('.message-content .chat-record')?.__vue__?.list$ ?? []
+          // 直接检查 .chat-conversation 的 Vue 组件
+          const chatConversation = document.querySelector('.chat-conversation')
+          if (chatConversation?.__vue__) {
+            const vue = chatConversation.__vue__
+            console.log('[SmartReply] .chat-conversation Vue keys:', Object.keys(vue).filter(k => !k.startsWith('_') && !k.startsWith('$')))
+
+            // 尝试获取消息列表
+            const possibleListKeys = ['list$', 'list', 'messages', 'messageList', 'data', 'items', 'records', 'chatList']
+            for (const key of possibleListKeys) {
+              if (vue[key] && Array.isArray(vue[key]) && vue[key].length > 0) {
+                console.log('[SmartReply] 找到消息列表:', key, '长度:', vue[key].length)
+                return vue[key]
+              }
+            }
+
+            // 检查 $data 里的属性
+            if (vue.$data) {
+              console.log('[SmartReply] Vue $data keys:', Object.keys(vue.$data))
+              for (const key of Object.keys(vue.$data)) {
+                if (Array.isArray(vue.$data[key]) && vue.$data[key].length > 0) {
+                  const firstItem = vue.$data[key][0]
+                  if (firstItem && (firstItem.text || firstItem.content || firstItem.message)) {
+                    console.log('[SmartReply] 在 $data 找到可能的消息列表:', key, '长度:', vue.$data[key].length)
+                    return vue.$data[key]
+                  }
+                }
+              }
+            }
+          }
+
+          // 检查 .chat-conversation 内部的消息元素
+          const messageEls = chatConversation?.querySelectorAll('[class*="message"], [class*="msg"], [class*="chat-item"]')
+          console.log('[SmartReply] .chat-conversation 内消息元素数量:', messageEls?.length)
+
+          if (messageEls && messageEls.length > 0) {
+            return [...messageEls].map(el => ({
+              text: el.textContent || '',
+              isSelf: el.classList.contains('self') || el.classList.contains('is-self') || !!el.closest('[class*="self"]'),
+              className: el.className
+            }))
+          }
+
+          // 打印 .chat-conversation 的 innerHTML 前 1000 字符
+          console.log('[SmartReply] .chat-conversation innerHTML 预览:', chatConversation?.innerHTML?.substring(0, 1000))
+
+          return []
         })
       ) ?? []
 
@@ -411,11 +741,12 @@ const mainLoop = async () => {
       continue
     }
 
-    // 获取候选人信息（从页面 DOM 获取正确的 encryptGeekId）
+    // 获取候选人信息
     const geekInfo = await getCurrentChatGeekInfo(pageMapByName.boss!)
-    const encryptGeekId = geekInfo?.encryptGeekId || ''
+    const encryptGeekId = geekInfo?.encryptGeekId || (targetChat as any).encryptGeekId || ''
     const geekName = geekInfo?.name || targetChat.name || ''
-    const encryptJobId = (targetChat as any).encryptJobId || ''
+    const encryptJobId = geekInfo?.encryptJobId || (targetChat as any).encryptJobId || ''
+    const jobName = (targetChat as any).jobName || (targetChat as any).title || ''
     // 兼容不同的消息格式：可能是 text 或 content
     const candidateMessage = lastMsg.text || lastMsg.content || ''
 
@@ -526,7 +857,7 @@ const mainLoop = async () => {
       await getOrCreateRecord(dataSource!, sessionId, encryptGeekId, {
         geekName,
         encryptJobId,
-        jobName: (targetChat as any).title
+        jobName
       })
       await updateLastLlmReply(dataSource!, sessionId, encryptGeekId, llmResult.reply)
     } catch (saveErr) {
