@@ -7,7 +7,6 @@
 import { Browser, Page } from 'puppeteer'
 import { sleep } from '@geekgeekrun/utils/sleep.mjs'
 import { checkCookieListFormat } from '../../../common/utils/cookie'
-import { sendTextMessage } from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
 import { getPublicDbFilePath, readStorageFile, writeStorageFile } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
 import type { DataSource } from 'typeorm'
@@ -298,6 +297,84 @@ async function getFullGeekInfo(page: Page): Promise<{
   }
 }
 
+// 滚动聊天列表以加载更多消息
+async function scrollChatList(page: Page, times: number = 3): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await page.evaluate(() => {
+      // 找到聊天列表容器并滚动
+      const listContainer = document.querySelector('[role="group"]') ||
+                           document.querySelector('.user-list') ||
+                           document.querySelector('.chat-list')
+      if (listContainer) {
+        listContainer.scrollTop = listContainer.scrollHeight
+      }
+    })
+    await sleep(500)
+  }
+}
+
+// 发送消息 - 使用正确的选择器
+async function sendChatMessage(page: Page, text: string): Promise<boolean> {
+  try {
+    console.log('[Interview ManualTest] 开始发送消息...')
+
+    // 使用正确的输入框选择器
+    const chatInputSelector = `.boss-chat-editor-input`
+    const chatInputHandle = await page.$(chatInputSelector)
+
+    if (!chatInputHandle) {
+      console.error('[Interview ManualTest] 未找到聊天输入框，尝试其他选择器...')
+      // 尝试其他选择器
+      const altInput = await page.$('textarea[class*="chat"]')
+      if (!altInput) {
+        console.error('[Interview ManualTest] 仍未找到输入框')
+        return false
+      }
+      return sendWithInput(page, altInput, text)
+    }
+
+    return sendWithInput(page, chatInputHandle, text)
+  } catch (e) {
+    console.error('[Interview ManualTest] 发送消息失败:', e)
+    return false
+  }
+}
+
+async function sendWithInput(page: Page, inputHandle: any, text: string): Promise<boolean> {
+  // 点击输入框获取焦点
+  await inputHandle.click()
+  await sleep(300)
+  await inputHandle.click()
+  await sleep(200)
+
+  // 清空现有内容
+  await page.evaluate(() => {
+    const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
+    if (input) {
+      input.value = ''
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+  })
+
+  // 输入文本
+  await inputHandle.type(text, { delay: 30 + Math.random() * 20 })
+  await sleep(500)
+
+  // 查找发送按钮
+  const sendButton = await page.$('.chat-send-btn, button[class*="send"]')
+  if (sendButton) {
+    await sendButton.click()
+    console.log('[Interview ManualTest] 已点击发送按钮')
+  } else {
+    // 尝试按 Enter 发送
+    await inputHandle.press('Enter')
+    console.log('[Interview ManualTest] 已按 Enter 发送')
+  }
+
+  await sleep(1000)
+  return true
+}
+
 export async function runManualTest() {
   console.log('[Interview ManualTest] 开始执行...')
 
@@ -395,6 +472,11 @@ export async function runManualTest() {
         console.log('[Interview ManualTest] 页面已关闭，退出')
         break
       }
+
+      // 先滚动聊天列表加载更多消息
+      console.log('[Interview ManualTest] 滚动聊天列表...')
+      await scrollChatList(page, 3)
+      await sleep(1000)
 
       // 获取聊天列表 - 采用与 SMART_REPLY_MAIN 相同的方式从 Vue 组件提取数据
       const friendListData = await page.evaluate(() => {
@@ -703,7 +785,7 @@ export async function runManualTest() {
       await sleep(3000)
     }
 
-    const sendSuccess = await sendTextMessage(page, questionData.questionText)
+    const sendSuccess = await sendChatMessage(page, questionData.questionText)
     console.log('[Interview ManualTest] 发送结果:', sendSuccess ? '成功' : '失败')
 
     if (!sendSuccess) {
