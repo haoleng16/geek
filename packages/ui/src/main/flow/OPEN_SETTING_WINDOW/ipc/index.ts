@@ -851,25 +851,44 @@ export default function initIpc() {
   // 保存面试岗位配置
   ipcMain.handle('interview-save-job', async (_, data: any) => {
     try {
+      console.log('[Interview] 保存岗位配置, data:', JSON.stringify(data).substring(0, 500))
       const {
         saveInterviewJobPosition,
-        saveInterviewQuestionRound
+        saveInterviewQuestionRound,
+        deleteInterviewQuestionRound,
+        getInterviewJobPositionWithDetails
       } = await import('../utils/db/index')
 
       const result = await saveInterviewJobPosition(data)
       // result is { data: savedEntity } from worker wrapper
       const savedJob = result?.data
+      console.log('[Interview] 岗位保存结果, id:', savedJob?.id)
 
-      // 保存问题轮次
-      if (savedJob?.id && data.questionRounds) {
-        for (const round of data.questionRounds) {
-          await saveInterviewQuestionRound({
-            ...round,
-            jobPositionId: savedJob.id
-          })
+      // 保存问题轮次 - 先删除旧的再保存新的
+      if (savedJob?.id) {
+        // 获取所有旧的问题轮次并删除
+        const existingJobResult = await getInterviewJobPositionWithDetails(savedJob.id)
+        const existingRounds = existingJobResult?.data?.questionRounds || []
+        console.log('[Interview] 找到现有轮次数量:', existingRounds.length)
+
+        for (const round of existingRounds) {
+          console.log('[Interview] 删除旧轮次, id:', round.id)
+          await deleteInterviewQuestionRound(round.id)
+        }
+
+        // 保存新的问题轮次
+        if (data.questionRounds) {
+          console.log('[Interview] 保存新轮次数量:', data.questionRounds.length)
+          for (const round of data.questionRounds) {
+            await saveInterviewQuestionRound({
+              ...round,
+              jobPositionId: savedJob.id
+            })
+          }
         }
       }
 
+      console.log('[Interview] 保存完成')
       return { success: true, data: savedJob }
     } catch (error: any) {
       console.error('interview-save-job error:', error)

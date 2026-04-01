@@ -691,10 +691,23 @@ export async function saveInterviewJobPosition(
  */
 export async function getInterviewJobPositionList(ds: DataSource) {
   const repo = ds.getRepository(InterviewJobPosition);
-  return await repo.find({
+  const questionRoundRepo = ds.getRepository(InterviewQuestionRound);
+
+  const list = await repo.find({
     where: { isActive: true },
     order: { createdAt: 'DESC' }
   });
+
+  // 为每个岗位获取问题轮次
+  const result = await Promise.all(list.map(async (job) => {
+    const questionRounds = await questionRoundRepo.find({
+      where: { jobPositionId: job.id },
+      order: { roundNumber: 'ASC' }
+    });
+    return { ...job, questionRounds };
+  }));
+
+  return result;
 }
 
 /**

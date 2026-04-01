@@ -65,10 +65,26 @@ export function initInterviewIpcHandlers(ds: DataSource) {
   // 保存岗位配置
   ipcMain.handle('interview-save-job', async (_, data: any) => {
     try {
+      console.log('[Interview IPC] 保存岗位配置, data:', JSON.stringify(data).substring(0, 500))
       const result = await saveInterviewJobPosition(dataSource, data)
+      console.log('[Interview IPC] 岗位保存结果, id:', result.id)
+
+      // 先删除该岗位的所有旧问题轮次，再保存新的
+      // 这样可以确保删除操作生效
+      const existingRounds = await dataSource.query(
+        `SELECT id FROM interview_question_round WHERE jobPositionId = ?`,
+        [result.id]
+      )
+      console.log('[Interview IPC] 找到现有轮次数量:', existingRounds.length)
+
+      for (const round of existingRounds) {
+        console.log('[Interview IPC] 删除旧轮次, id:', round.id)
+        await deleteInterviewQuestionRound(dataSource, round.id)
+      }
 
       // 保存问题轮次
       if (data.questionRounds) {
+        console.log('[Interview IPC] 保存新轮次数量:', data.questionRounds.length)
         for (const round of data.questionRounds) {
           await saveInterviewQuestionRound(dataSource, {
             ...round,
@@ -87,8 +103,10 @@ export function initInterviewIpcHandlers(ds: DataSource) {
         }
       }
 
+      console.log('[Interview IPC] 保存完成')
       return { success: true, data: result }
     } catch (error: any) {
+      console.error('[Interview IPC] 保存失败:', error)
       return { success: false, error: error?.message }
     }
   })

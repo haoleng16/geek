@@ -60,7 +60,7 @@ async function scrollChatList(page: Page): Promise<boolean> {
 // 发送消息
 async function sendChatMessage(page: Page, text: string): Promise<boolean> {
   try {
-    console.log('[Interview ManualTest] 开始发送消息...')
+    console.log('[Interview ManualTest] 开始发送消息, 内容长度:', text.length)
 
     // 使用正确的输入框选择器
     const chatInputHandle = await page.$('.boss-chat-editor-input')
@@ -70,22 +70,71 @@ async function sendChatMessage(page: Page, text: string): Promise<boolean> {
       return false
     }
 
+    console.log('[Interview ManualTest] 找到输入框')
+
     // 点击输入框获取焦点
     await chatInputHandle.click()
     await sleep(300)
 
-    // 清空现有内容
-    await page.evaluate(() => {
-      const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
-      if (input) {
-        input.value = ''
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      }
-    })
+    console.log('[Interview ManualTest] 尝试设置输入框内容...')
 
-    // 输入文本
-    await chatInputHandle.type(text, { delay: 30 })
+    // 方法1：使用 execCommand 设置内容（兼容 React/Vue）
+    let setInputSuccess = false
+    try {
+      setInputSuccess = await page.evaluate((content) => {
+        const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
+        if (!input) return false
+
+        input.focus()
+
+        // 使用 document.execCommand 方式设置内容，更兼容 React/Vue
+        // 先选中所有内容
+        input.select()
+        // 删除选中内容
+        document.execCommand('delete', false)
+        // 插入新内容
+        document.execCommand('insertText', false, content)
+
+        return input.value === content
+      }, text)
+      console.log('[Interview ManualTest] execCommand 设置结果:', setInputSuccess)
+    } catch (evalError: any) {
+      console.error('[Interview ManualTest] execCommand 执行失败:', evalError?.message)
+    }
+
+    // 如果 execCommand 失败，回退到 type 方法
+    if (!setInputSuccess) {
+      console.log('[Interview ManualTest] 使用 type 方法输入')
+      try {
+        await chatInputHandle.click()
+        await sleep(200)
+
+        // 清空
+        await page.evaluate(() => {
+          const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
+          if (input) {
+            input.value = ''
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+          }
+        })
+        await sleep(100)
+
+        // 使用 type 方法输入
+        await chatInputHandle.type(text, { delay: 50 })
+        console.log('[Interview ManualTest] type 方法输入完成')
+      } catch (typeError: any) {
+        console.error('[Interview ManualTest] type 方法失败:', typeError?.message)
+      }
+    }
+
     await sleep(500)
+
+    // 验证输入
+    const inputValue = await page.evaluate(() => {
+      const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
+      return input?.value || ''
+    })
+    console.log('[Interview ManualTest] 输入验证, 期望:', text.length, '实际:', inputValue.length)
 
     // 按 Enter 发送
     await chatInputHandle.press('Enter')
@@ -93,8 +142,8 @@ async function sendChatMessage(page: Page, text: string): Promise<boolean> {
 
     await sleep(1000)
     return true
-  } catch (e) {
-    console.error('[Interview ManualTest] 发送消息失败:', e)
+  } catch (e: any) {
+    console.error('[Interview ManualTest] 发送消息失败:', e?.message || e)
     return false
   }
 }
@@ -548,16 +597,23 @@ export async function runManualTest() {
           // 尝试从 Vue 组件获取数据（与 SMART_REPLY_MAIN 相同的方式）
           const vue = (geekItemEl as any).__vue__ || (el as any).__vue__
           const props = vue?._props || vue?.$props || vue?.props || {}
-          const data = props.geek || props.item || props.message || props.user || props.data || props.row || {}
+          // 关键：source 属性是 BOSS直聘聊天列表项的主要数据来源
+          const source = vue?.source || {}
+          const data = props.geek || props.item || props.message || props.user || props.data || props.row || source
+
+          // encryptJobId 主要在 source.encryptJobId 中
+          const encryptJobId = source.encryptJobId || data.encryptJobId || ''
 
           return {
             name: name || data.name || data.geekName || data.fromName || '',
-            encryptGeekId: keyId || data.encryptGeekId || data.geekId || data.securityId || '',
-            encryptJobId: data.encryptJobId || '',
+            encryptGeekId: keyId || data.encryptGeekId || data.geekId || data.securityId || source.encryptGeekId || '',
+            encryptJobId,
             unreadCount: unreadCount || data.unreadCount || data.newMsgCount || 0,
-            jobName: jobName || data.jobName || '',
+            jobName: jobName || data.jobName || source.jobName || '',
             _rawData: data,
-            _hasVue: !!vue
+            _source: source,
+            _hasVue: !!vue,
+            _vueSourceKeys: source ? Object.keys(source).slice(0, 20) : []
           }
         })
       }) as unknown as ChatListItem[]
@@ -569,12 +625,13 @@ export async function runManualTest() {
       console.log('[Interview ManualTest] 第一个聊天项调试信息:', {
         name: firstItem.name,
         encryptGeekId: firstItem.encryptGeekId,
-        encryptJobId: firstItem.encryptJobId,
+        encryptJobId: firstItem.encryptJobId || '(空)',
         jobName: firstItem.jobName,
         unreadCount: firstItem.unreadCount,
         hasVue: firstItem._hasVue,
-        rawDataKeys: firstItem._rawData ? Object.keys(firstItem._rawData) : [],
-        rawDataPreview: firstItem._rawData ? JSON.stringify(firstItem._rawData).substring(0, 200) : ''
+        sourceKeys: firstItem._vueSourceKeys || [],
+        rawDataKeys: firstItem._rawData ? Object.keys(firstItem._rawData).slice(0, 15) : [],
+        sourcePreview: firstItem._source ? JSON.stringify(firstItem._source).substring(0, 300) : ''
       })
     }
 
@@ -758,7 +815,9 @@ export async function runManualTest() {
       geekName,
       jobName,
       encryptGeekId: encryptGeekId ? '已获取' : '空',
-      encryptJobId: encryptJobId ? '已获取' : '空',
+      encryptJobId: encryptJobId ? '已获取(' + encryptJobId.substring(0, 10) + '...)' : '空',
+      targetChatEncryptJobId: (targetChat as any).encryptJobId ? '有' : '无',
+      geekInfoEncryptJobId: geekInfo?.encryptJobId ? '有' : '无',
       targetChatName: targetChat.name,
       geekInfoName: geekInfo?.name || '无'
     })

@@ -11,22 +11,22 @@ import type { ChatMessage } from '../RECRUITER_AUTO_REPLY_MAIN/llm-reply'
 // ==================== 类型定义 ====================
 
 export interface SmartReplyConfig {
-  companyIntro: string
-  jobDescription: string
-  systemPrompt?: string
+  companyIntro: string //公司介绍
+  jobDescription: string //职位描述
+  systemPrompt?: string//系统提示词
 }
 
 export interface LlmResponse {
-  reply: string
-  isClear: boolean
+  reply: string   //大模型的回复
+  isClear: boolean //大模型是否清楚该回答
 }
 
 export interface LlmConfig {
-  id: string
-  providerCompleteApiUrl: string
-  providerApiSecret: string
-  model: string
-  enabled?: boolean
+  id: string //标识符
+  providerCompleteApiUrl: string //baseURl
+  providerApiSecret: string //API密钥
+  model: string //模型名称
+  enabled?: boolean //是否可选
 }
 
 // ==================== 默认提示词 ====================
