@@ -513,6 +513,45 @@ export async function runManualTest() {
     console.log('[Interview ManualTest] 等待聊天数据加载...')
     await sleep(2000)
 
+    // 打印聊天区域的完整结构，帮助调试
+    const chatAreaDebug = await page.evaluate(() => {
+      const chatConversation = document.querySelector('.chat-conversation')
+      if (!chatConversation) {
+        return { found: false }
+      }
+
+      // 查找所有可能的输入框和发送按钮
+      const allInputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')
+      const allButtons = document.querySelectorAll('button, [class*="btn"], [class*="send"]')
+
+      // 查找 message-controls 的各种可能选择器
+      const possibleContainers = [
+        '.message-controls',
+        '.chat-controls',
+        '.input-area',
+        '.reply-box',
+        '.chat-input-box',
+        '[class*="control"]',
+        '[class*="input"]'
+      ]
+
+      const foundContainers = possibleContainers.map(selector => ({
+        selector,
+        count: document.querySelectorAll(selector).length
+      })).filter(item => item.count > 0)
+
+      return {
+        found: true,
+        conversationHTMLLength: chatConversation.innerHTML.length,
+        inputCount: allInputs.length,
+        inputClasses: [...allInputs].slice(0, 3).map(el => el.className),
+        buttonCount: allButtons.length,
+        buttonClasses: [...allButtons].slice(0, 5).map(el => el.className),
+        foundContainers
+      }
+    })
+    console.log('[Interview ManualTest] 聊天区域结构:', JSON.stringify(chatAreaDebug, null, 2))
+
     // 等待聊天区域加载完成
     let waitCount = 0
     while (waitCount < 10) {
