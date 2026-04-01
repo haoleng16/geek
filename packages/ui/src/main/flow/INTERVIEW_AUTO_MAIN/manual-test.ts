@@ -376,53 +376,6 @@ async function getFullGeekInfo(page: Page): Promise<{
   }
 }
 
-// 滚动聊天列表以加载更多消息
-async function scrollChatList(page: Page): Promise<boolean> {
-  try {
-    const result = await page.evaluate(() => {
-      // BOSS直聘使用虚拟滚动，需要找到正确的滚动容器
-      // 尝试多种选择器
-      const possibleContainers = [
-        '[role="group"]',           // 虚拟滚动容器
-        '.user-list',
-        '.chat-list',
-        '.geek-list',
-        '[class*="list"]',
-        '.scroll-container'
-      ]
-
-      let scrolled = false
-      for (const selector of possibleContainers) {
-        const container = document.querySelector(selector)
-        if (container && container.scrollHeight > container.clientHeight) {
-          // 找到可滚动的容器
-          const oldScrollTop = container.scrollTop
-          container.scrollTop = container.scrollHeight
-          scrolled = oldScrollTop !== container.scrollTop
-          if (scrolled) {
-            console.log('[scrollChatList] 滚动容器:', selector, '滚动前:', oldScrollTop, '滚动后:', container.scrollTop)
-            break
-          }
-        }
-      }
-
-      // 如果没找到可滚动的容器，尝试滚动整个文档
-      if (!scrolled) {
-        const oldScrollTop = document.documentElement.scrollTop || document.body.scrollTop
-        window.scrollTo(0, document.body.scrollHeight)
-        scrolled = oldScrollTop !== (document.documentElement.scrollTop || document.body.scrollTop)
-      }
-
-      return { scrolled }
-    })
-
-    return result.scrolled
-  } catch (e) {
-    console.log('[Interview ManualTest] 滚动失败:', e)
-    return false
-  }
-}
-
 // 滚动并等待新消息加载
 async function scrollAndWaitForNewMessages(page: Page, currentCount: number, maxAttempts: number = 5): Promise<number> {
   let attempts = 0
