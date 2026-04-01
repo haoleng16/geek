@@ -747,9 +747,10 @@ export async function runManualTest() {
 
     // 获取候选人详细信息 - 优先使用从聊天列表获取的数据
     const geekInfo = await getFullGeekInfo(page)
-    // 优先使用从聊天列表 Vue 组件获取的 encryptGeekId
+    // 优先使用从聊天列表获取的信息（targetChat），而不是右侧聊天区域（geekInfo）
+    // 因为右侧聊天区域可能还没刷新完成
     const encryptGeekId = (targetChat as any).encryptGeekId || geekInfo?.encryptGeekId || ''
-    const geekName = geekInfo?.name || targetChat.name || ''
+    const geekName = targetChat.name || geekInfo?.name || ''
     const encryptJobId = (targetChat as any).encryptJobId || geekInfo?.encryptJobId || ''
     const jobName = (targetChat as any).jobName || geekInfo?.jobName || ''
 
@@ -758,8 +759,8 @@ export async function runManualTest() {
       jobName,
       encryptGeekId: encryptGeekId ? '已获取' : '空',
       encryptJobId: encryptJobId ? '已获取' : '空',
-      hasVue: (targetChat as any)._hasVue,
-      rawDataKeys: (targetChat as any)._rawData ? Object.keys((targetChat as any)._rawData) : []
+      targetChatName: targetChat.name,
+      geekInfoName: geekInfo?.name || '无'
     })
 
     if (!encryptGeekId) {
