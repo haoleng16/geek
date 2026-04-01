@@ -509,7 +509,48 @@ export async function runManualTest() {
       }
     }, nextIndex)
 
+    // 等待聊天数据加载
+    console.log('[Interview ManualTest] 等待聊天数据加载...')
     await sleep(2000)
+
+    // 等待聊天区域加载完成
+    let waitCount = 0
+    while (waitCount < 10) {
+      const dataLoaded = await page.evaluate(() => {
+        const noData = document.querySelector('.conversation-no-data')
+        const chatConversation = document.querySelector('.chat-conversation')
+        const messageControls = document.querySelector('.chat-conversation .message-controls')
+        const chatInput = document.querySelector('.chat-conversation .message-controls .chat-input')
+
+        return {
+          hasNoData: !!noData,
+          hasMessageControls: !!messageControls,
+          hasChatInput: !!chatInput,
+          conversationHTMLLength: chatConversation?.innerHTML?.length || 0
+        }
+      })
+
+      console.log('[Interview ManualTest] 数据加载状态:', JSON.stringify(dataLoaded))
+
+      if (dataLoaded.hasMessageControls && dataLoaded.hasChatInput) {
+        console.log('[Interview ManualTest] 聊天区域已加载')
+        break
+      }
+
+      if (dataLoaded.hasNoData) {
+        console.log('[Interview ManualTest] 无聊天数据')
+        break
+      }
+
+      waitCount++
+      await sleep(1000)
+    }
+
+    if (waitCount >= 10) {
+      console.log('[Interview ManualTest] 等待超时，跳过')
+      cursorIndex += 1
+      continue
+    }
 
     // 获取候选人详细信息 - 优先使用从聊天列表获取的数据
     const geekInfo = await getFullGeekInfo(page)
