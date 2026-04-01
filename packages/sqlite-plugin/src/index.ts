@@ -26,6 +26,14 @@ import { RecruiterDailyStats } from './entity/RecruiterDailyStats'
 import { RecruiterTemplate } from './entity/RecruiterTemplate'
 import { RecruiterContactedCandidate } from './entity/RecruiterContactedCandidate'
 import { SmartReplyRecord } from './entity/SmartReplyRecord'
+import { InterviewJobPosition } from './entity/InterviewJobPosition'
+import { InterviewQuestionRound } from './entity/InterviewQuestionRound'
+import { InterviewScoreRule } from './entity/InterviewScoreRule'
+import { InterviewCandidate } from './entity/InterviewCandidate'
+import { InterviewQaRecord } from './entity/InterviewQaRecord'
+import { InterviewResume } from './entity/InterviewResume'
+import { InterviewSystemConfig } from './entity/InterviewSystemConfig'
+import { InterviewOperationLog } from './entity/InterviewOperationLog'
 
 import {
   saveChatStartupRecord,
@@ -48,6 +56,7 @@ import { AddRecruiterTables1777555555555 } from "./migrations/1777555555555-AddR
 import { AddRecruiterTemplateTable1777666666666 } from "./migrations/1777666666666-AddRecruiterTemplateTable";
 import { AddRecruiterContactedCandidateTable1777777777777 } from "./migrations/1777777777777-AddRecruiterContactedCandidateTable";
 import { AddSmartReplyRecordTable1788888888888 } from "./migrations/1788888888888-AddSmartReplyRecordTable";
+import { AddInterviewTables1799999999999 } from "./migrations/1799999999999-AddInterviewTables";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -85,6 +94,14 @@ export function initDb(dbFilePath) {
       RecruiterTemplate,
       RecruiterContactedCandidate,
       SmartReplyRecord,
+      InterviewJobPosition,
+      InterviewQuestionRound,
+      InterviewScoreRule,
+      InterviewCandidate,
+      InterviewQaRecord,
+      InterviewResume,
+      InterviewSystemConfig,
+      InterviewOperationLog,
     ],
     migrations: [
       Init1000000000000,
@@ -96,7 +113,8 @@ export function initDb(dbFilePath) {
       AddRecruiterTables1777555555555,
       AddRecruiterTemplateTable1777666666666,
       AddRecruiterContactedCandidateTable1777777777777,
-      AddSmartReplyRecordTable1788888888888
+      AddSmartReplyRecordTable1788888888888,
+      AddInterviewTables1799999999999
     ],
     migrationsRun: true
   });

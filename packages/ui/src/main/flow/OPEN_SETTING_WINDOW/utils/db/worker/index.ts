@@ -17,6 +17,13 @@ import { RecruiterDailyStats } from '@geekgeekrun/sqlite-plugin/dist/entity/Recr
 import { RecruiterTemplate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterTemplate'
 import { RecruiterContactedCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterContactedCandidate'
 import { SmartReplyRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/SmartReplyRecord'
+import { InterviewJobPosition } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewJobPosition'
+import { InterviewQuestionRound } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewQuestionRound'
+import { InterviewScoreRule } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewScoreRule'
+import { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewCandidate'
+import { InterviewQaRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewQaRecord'
+import { InterviewResume } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewResume'
+import { InterviewSystemConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewSystemConfig'
 
 const dbInitPromise = initDb(getPublicDbFilePath())
 let dataSource: DataSource | null = null
@@ -463,6 +470,240 @@ const payloadHandler = {
         count: row.count
       }
     })
+  },
+  // ==================== Interview Auto Handlers ====================
+  async getInterviewJobPositionList(): Promise<any[]> {
+    const repo = dataSource!.getRepository(InterviewJobPosition)
+    const questionRoundRepo = dataSource!.getRepository(InterviewQuestionRound)
+
+    const jobPositions = await repo.find({
+      order: { createdAt: 'DESC' }
+    })
+
+    // 为每个岗位查询问题轮次数量
+    const result = await Promise.all(jobPositions.map(async (job) => {
+      const questionRounds = await questionRoundRepo.find({
+        where: { jobPositionId: job.id },
+        order: { roundNumber: 'ASC' }
+      })
+      return {
+        ...job,
+        questionRounds
+      }
+    }))
+
+    return result
+  },
+  async getInterviewJobPositionWithDetails({ id }): Promise<any> {
+    const repo = dataSource!.getRepository(InterviewJobPosition)
+    const questionRoundRepo = dataSource!.getRepository(InterviewQuestionRound)
+    const scoreRuleRepo = dataSource!.getRepository(InterviewScoreRule)
+
+    const jobPosition = await repo.findOne({ where: { id } })
+    if (!jobPosition) return null
+
+    const questionRounds = await questionRoundRepo.find({
+      where: { jobPositionId: id },
+      order: { roundNumber: 'ASC' }
+    })
+
+    const scoreRules = await scoreRuleRepo.find({
+      where: { jobPositionId: id }
+    })
+
+    return { ...jobPosition, questionRounds, scoreRules }
+  },
+  async saveInterviewJobPosition(data: Partial<InterviewJobPosition>): Promise<InterviewJobPosition> {
+    const repo = dataSource!.getRepository(InterviewJobPosition)
+    let entity: InterviewJobPosition
+
+    if (data.id) {
+      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewJobPosition()
+    } else {
+      entity = new InterviewJobPosition()
+    }
+
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
+  async deleteInterviewJobPosition({ id }): Promise<void> {
+    const repo = dataSource!.getRepository(InterviewJobPosition)
+    await repo.delete(id)
+  },
+  async saveInterviewQuestionRound(data: Partial<InterviewQuestionRound>): Promise<InterviewQuestionRound> {
+    const repo = dataSource!.getRepository(InterviewQuestionRound)
+    let entity: InterviewQuestionRound
+
+    if (data.id) {
+      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewQuestionRound()
+    } else {
+      entity = new InterviewQuestionRound()
+    }
+
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
+  async deleteInterviewQuestionRound({ id }): Promise<void> {
+    const repo = dataSource!.getRepository(InterviewQuestionRound)
+    await repo.delete(id)
+  },
+  async saveInterviewScoreRule(data: Partial<InterviewScoreRule>): Promise<InterviewScoreRule> {
+    const repo = dataSource!.getRepository(InterviewScoreRule)
+    let entity: InterviewScoreRule
+
+    if (data.id) {
+      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewScoreRule()
+    } else {
+      entity = new InterviewScoreRule()
+    }
+
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
+  async getInterviewCandidateList(params: {
+    status?: string
+    jobPositionId?: number
+    page?: number
+    pageSize?: number
+  }): Promise<{ data: InterviewCandidate[]; total: number }> {
+    const { status, jobPositionId, page = 1, pageSize = 20 } = params
+    const repo = dataSource!.getRepository(InterviewCandidate)
+
+    const where: any = {}
+    if (status) where.status = status
+    if (jobPositionId) where.jobPositionId = jobPositionId
+
+    const [data, total] = await repo.findAndCount({
+      where,
+      order: { updatedAt: 'DESC' },
+      skip: (page - 1) * pageSize,
+      take: pageSize
+    })
+
+    return { data, total, page, pageSize }
+  },
+  async getInterviewCandidate({ id }): Promise<InterviewCandidate | null> {
+    const repo = dataSource!.getRepository(InterviewCandidate)
+    return await repo.findOne({ where: { id } })
+  },
+  async getInterviewCandidateByGeekJob({ encryptGeekId, encryptJobId }): Promise<InterviewCandidate | null> {
+    const repo = dataSource!.getRepository(InterviewCandidate)
+    return await repo.findOne({
+      where: { encryptGeekId, encryptJobId }
+    })
+  },
+  async saveInterviewCandidate(data: Partial<InterviewCandidate>): Promise<InterviewCandidate> {
+    const repo = dataSource!.getRepository(InterviewCandidate)
+    let entity: InterviewCandidate
+
+    if (data.id) {
+      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewCandidate()
+    } else if (data.encryptGeekId && data.encryptJobId) {
+      entity = await repo.findOne({
+        where: { encryptGeekId: data.encryptGeekId, encryptJobId: data.encryptJobId }
+      }) || new InterviewCandidate()
+    } else {
+      entity = new InterviewCandidate()
+    }
+
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
+  async updateInterviewCandidateStatus({ id, status, extraData }): Promise<InterviewCandidate | null> {
+    const repo = dataSource!.getRepository(InterviewCandidate)
+    const entity = await repo.findOne({ where: { id } })
+    if (!entity) return null
+
+    entity.status = status
+    if (extraData) {
+      Object.assign(entity, extraData)
+    }
+    return await repo.save(entity)
+  },
+  async getInterviewQaRecordList({ candidateId }): Promise<InterviewQaRecord[]> {
+    const repo = dataSource!.getRepository(InterviewQaRecord)
+    return await repo.find({
+      where: { candidateId },
+      order: { roundNumber: 'ASC' }
+    })
+  },
+  async saveInterviewQaRecord(data: Partial<InterviewQaRecord>): Promise<InterviewQaRecord> {
+    const repo = dataSource!.getRepository(InterviewQaRecord)
+    let entity: InterviewQaRecord
+
+    if (data.id) {
+      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewQaRecord()
+    } else {
+      entity = new InterviewQaRecord()
+    }
+
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
+  async getInterviewResume({ candidateId }): Promise<InterviewResume | null> {
+    const repo = dataSource!.getRepository(InterviewResume)
+    return await repo.findOne({ where: { candidateId } })
+  },
+  async saveInterviewResume(data: Partial<InterviewResume>): Promise<InterviewResume> {
+    const repo = dataSource!.getRepository(InterviewResume)
+    let entity: InterviewResume
+
+    if (data.id) {
+      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewResume()
+    } else if (data.candidateId) {
+      entity = await repo.findOne({ where: { candidateId: data.candidateId } }) || new InterviewResume()
+    } else {
+      entity = new InterviewResume()
+    }
+
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
+  async getInterviewSystemConfig({ key }): Promise<string | null> {
+    const repo = dataSource!.getRepository(InterviewSystemConfig)
+    const entity = await repo.findOne({ where: { configKey: key } })
+    return entity?.configValue || null
+  },
+  async getAllInterviewSystemConfig(): Promise<Record<string, any>> {
+    const repo = dataSource!.getRepository(InterviewSystemConfig)
+    const list = await repo.find()
+    const config: Record<string, any> = {}
+    for (const item of list) {
+      try {
+        config[item.configKey] = JSON.parse(item.configValue)
+      } catch {
+        config[item.configKey] = item.configValue
+      }
+    }
+    return config
+  },
+  async saveInterviewSystemConfig({ key, value, isEncrypted }): Promise<void> {
+    const repo = dataSource!.getRepository(InterviewSystemConfig)
+    let entity = await repo.findOne({ where: { configKey: key } })
+
+    if (!entity) {
+      entity = new InterviewSystemConfig()
+      entity.configKey = key
+    }
+
+    entity.configValue = value
+    entity.isEncrypted = isEncrypted || false
+    await repo.save(entity)
+  },
+  async countInterviewCandidatesByStatus(): Promise<Record<string, number>> {
+    const repo = dataSource!.getRepository(InterviewCandidate)
+    const result = await repo
+      .createQueryBuilder('candidate')
+      .select('candidate.status', 'status')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('candidate.status')
+      .getRawMany()
+
+    const stats: Record<string, number> = {}
+    for (const item of result) {
+      stats[item.status] = Number(item.count)
+    }
+    return stats
   }
 }
 

@@ -140,6 +140,27 @@ const routes: Array<RouteRecordRaw> = [
         meta: {
           title: '智能回复数据'
         }
+      },
+      {
+        path: 'InterviewConfig',
+        component: () => import('@renderer/page/MainLayout/InterviewConfig.vue'),
+        meta: {
+          title: '面试自动化配置'
+        }
+      },
+      {
+        path: 'InterviewCandidateList',
+        component: () => import('@renderer/page/MainLayout/InterviewCandidateList.vue'),
+        meta: {
+          title: '候选人看板'
+        }
+      },
+      {
+        path: 'InterviewEmailSetting',
+        component: () => import('@renderer/page/MainLayout/InterviewEmailSetting.vue'),
+        meta: {
+          title: '邮件设置'
+        }
       }
     ]
   },

@@ -830,4 +830,244 @@ export default function initIpc() {
     const { testLlmConnection } = await import('../../SMART_REPLY_MAIN/llm-reply')
     return await testLlmConnection()
   })
+
+  // ==================== 面试自动化 IPC ====================
+
+  // 获取面试岗位配置列表
+  ipcMain.handle('interview-get-job-list', async () => {
+    const { getInterviewJobPositionList } = await import('../utils/db/index')
+    const result = await getInterviewJobPositionList()
+    // result is { data: actualArray } from worker wrapper, extract actual data
+    return { success: true, data: result?.data || [] }
+  })
+
+  // 获取面试岗位配置详情
+  ipcMain.handle('interview-get-job-detail', async (_, id: number) => {
+    const { getInterviewJobPositionWithDetails } = await import('../utils/db/index')
+    const result = await getInterviewJobPositionWithDetails(id)
+    return { success: true, data: result?.data }
+  })
+
+  // 保存面试岗位配置
+  ipcMain.handle('interview-save-job', async (_, data: any) => {
+    try {
+      const {
+        saveInterviewJobPosition,
+        saveInterviewQuestionRound
+      } = await import('../utils/db/index')
+
+      const result = await saveInterviewJobPosition(data)
+      // result is { data: savedEntity } from worker wrapper
+      const savedJob = result?.data
+
+      // 保存问题轮次
+      if (savedJob?.id && data.questionRounds) {
+        for (const round of data.questionRounds) {
+          await saveInterviewQuestionRound({
+            ...round,
+            jobPositionId: savedJob.id
+          })
+        }
+      }
+
+      return { success: true, data: savedJob }
+    } catch (error: any) {
+      console.error('interview-save-job error:', error)
+      return { success: false, error: error?.message }
+    }
+  })
+
+  // 删除面试岗位配置
+  ipcMain.handle('interview-delete-job', async (_, id: number) => {
+    const { deleteInterviewJobPosition } = await import('../utils/db/index')
+    await deleteInterviewJobPosition(id)
+    return { success: true }
+  })
+
+  // 获取候选人列表
+  ipcMain.handle('interview-get-candidates', async (_, params: any) => {
+    const { getInterviewCandidateList } = await import('../utils/db/index')
+    const result = await getInterviewCandidateList(params)
+    // result?.data is { data: array, total: number, page, pageSize } from worker
+    const actualData = result?.data || {}
+    return {
+      success: true,
+      data: {
+        list: actualData.data || [],
+        total: actualData.total || 0,
+        page: actualData.page,
+        pageSize: actualData.pageSize
+      }
+    }
+  })
+
+  // 获取候选人详情
+  ipcMain.handle('interview-get-candidate-detail', async (_, id: number) => {
+    const {
+      getInterviewCandidate,
+      getInterviewQaRecordList,
+      getInterviewResume
+    } = await import('../utils/db/index')
+
+    const candidateResult = await getInterviewCandidate(id)
+    const qaResult = await getInterviewQaRecordList(id)
+    const resumeResult = await getInterviewResume(id)
+
+    return {
+      success: true,
+      data: {
+        candidate: candidateResult?.data,
+        qaRecords: qaResult?.data,
+        resume: resumeResult?.data
+      }
+    }
+  })
+
+  // 获取候选人统计数据
+  ipcMain.handle('interview-get-candidate-stats', async () => {
+    const { countInterviewCandidatesByStatus } = await import('../utils/db/index')
+    const result = await countInterviewCandidatesByStatus()
+    return { success: true, data: result?.data }
+  })
+
+  // 获取系统配置
+  ipcMain.handle('interview-get-config', async (_, key: string) => {
+    const { getInterviewSystemConfig } = await import('../utils/db/index')
+    const result = await getInterviewSystemConfig(key)
+    return { success: true, data: result?.data }
+  })
+
+  // 获取所有系统配置
+  ipcMain.handle('interview-get-all-config', async () => {
+    const { getAllInterviewSystemConfig } = await import('../utils/db/index')
+    const result = await getAllInterviewSystemConfig()
+    return { success: true, data: result?.data }
+  })
+
+  // 保存系统配置
+  ipcMain.handle('interview-save-config', async (_, key: string, value: string) => {
+    const { saveInterviewSystemConfig } = await import('../utils/db/index')
+    await saveInterviewSystemConfig(key, value)
+    return { success: true }
+  })
+
+  // 测试 SMTP 连接
+  ipcMain.handle('interview-test-smtp', async (_, config: any) => {
+    try {
+      const nodemailer = await import('nodemailer')
+      const transporter = nodemailer.default.createTransport({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: { user: config.user, pass: config.password },
+        connectionTimeout: 10000,
+        socketTimeout: 10000
+      })
+      await transporter.verify()
+      return { success: true, data: { success: true } }
+    } catch (error: any) {
+      return { success: true, data: { success: false, error: error?.message } }
+    }
+  })
+
+  // 保存邮件配置
+  ipcMain.handle('interview-save-email-config', async (_, config: any) => {
+    try {
+      const { saveInterviewSystemConfig } = await import('../utils/db/index')
+      await saveInterviewSystemConfig('smtp_config', JSON.stringify(config), true)
+      return { success: true }
+    } catch (error: any) {
+      console.error('interview-save-email-config error:', error)
+      return { success: false, error: error?.message }
+    }
+  })
+
+  // 发送测试邮件
+  ipcMain.handle('interview-send-test-email', async (_, config: any) => {
+    try {
+      const nodemailer = await import('nodemailer')
+      const transporter = nodemailer.default.createTransport({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: { user: config.user, pass: config.password },
+        connectionTimeout: 10000,
+        socketTimeout: 10000
+      })
+
+      // 发送测试邮件
+      await transporter.sendMail({
+        from: config.user,
+        to: config.recipient,
+        subject: '【面试自动化】测试邮件',
+        text: '这是一封测试邮件，来自面试自动化系统。如果您收到此邮件，说明SMTP配置正确。',
+        html: `
+          <div style="padding: 20px; background: #f5f5f5; border-radius: 8px;">
+            <h2 style="color: #409eff;">面试自动化系统</h2>
+            <p>这是一封测试邮件。</p>
+            <p>如果您收到此邮件，说明SMTP配置正确，邮件发送功能正常工作。</p>
+            <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+            <p style="color: #999; font-size: 12px;">发送时间：${new Date().toLocaleString('zh-CN')}</p>
+          </div>
+        `
+      })
+
+      return { success: true, data: { success: true } }
+    } catch (error: any) {
+      console.error('interview-send-test-email error:', error)
+      return { success: true, data: { success: false, error: error?.message } }
+    }
+  })
+
+  // 面试手动测试
+  ipcMain.handle('interview-manual-test', async () => {
+    try {
+      const { runManualTest } = await import('../../INTERVIEW_AUTO_MAIN/manual-test')
+      // 异步执行，不阻塞
+      runManualTest().catch(err => {
+        console.error('interview-manual-test error:', err)
+      })
+      return { success: true }
+    } catch (error: any) {
+      console.error('interview-manual-test error:', error)
+      return { success: false, error: error?.message }
+    }
+  })
+
+  // 启动面试自动化任务
+  ipcMain.handle('run-interview-auto', async () => {
+    const mode = 'interviewAutoMain'
+    const { runRecordId } = await runCommon({ mode })
+    daemonEE.on('message', function handler(message) {
+      if (message.workerId !== mode) {
+        return
+      }
+      if (message.type === 'worker-exited') {
+        mainWindow?.webContents.send('worker-exited', message)
+      }
+    })
+    return { runRecordId }
+  })
+
+  // 停止面试自动化任务
+  ipcMain.handle('stop-interview-auto', async () => {
+    mainWindow?.webContents.send('interview-auto-stopping')
+    const p = new Promise((resolve) => {
+      daemonEE.on('message', function handler(message) {
+        if (message.workerId !== 'interviewAutoMain') {
+          return
+        }
+        if (message.type === 'worker-exited') {
+          daemonEE.off('message', handler)
+          resolve(undefined)
+        }
+      })
+    })
+    await sendToDaemon(
+      { type: 'stop-worker', workerId: 'interviewAutoMain' },
+      { needCallback: true }
+    )
+    await p
+    mainWindow?.webContents.send('interview-auto-stopped')
+  })
 }

@@ -291,3 +291,172 @@ export const getSmartReplySessions = async () => {
   })
   return res
 }
+
+// ==================== Interview Auto DB Functions ====================
+
+export const getInterviewJobPositionList = async () => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewJobPositionList'
+  })
+  return res
+}
+
+export const getInterviewJobPositionWithDetails = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewJobPositionWithDetails',
+    id
+  })
+  return res
+}
+
+export const saveInterviewJobPosition = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewJobPosition',
+    ...data
+  })
+  return res
+}
+
+export const deleteInterviewJobPosition = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'deleteInterviewJobPosition',
+    id
+  })
+  return res
+}
+
+export const saveInterviewQuestionRound = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewQuestionRound',
+    ...data
+  })
+  return res
+}
+
+export const deleteInterviewQuestionRound = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'deleteInterviewQuestionRound',
+    id
+  })
+  return res
+}
+
+export const saveInterviewScoreRule = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewScoreRule',
+    ...data
+  })
+  return res
+}
+
+export const getInterviewCandidateList = async (params?: {
+  status?: string
+  jobPositionId?: number
+  page?: number
+  pageSize?: number
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewCandidateList',
+    ...params
+  })
+  return res
+}
+
+export const getInterviewCandidate = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewCandidate',
+    id
+  })
+  return res
+}
+
+export const getInterviewCandidateByGeekJob = async (encryptGeekId: string, encryptJobId: string) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewCandidateByGeekJob',
+    encryptGeekId,
+    encryptJobId
+  })
+  return res
+}
+
+export const saveInterviewCandidate = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewCandidate',
+    ...data
+  })
+  return res
+}
+
+export const updateInterviewCandidateStatus = async (id: number, status: string, extraData?: any) => {
+  const res = await createWorkerPromise({
+    type: 'updateInterviewCandidateStatus',
+    id,
+    status,
+    extraData
+  })
+  return res
+}
+
+export const getInterviewQaRecordList = async (candidateId: number) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewQaRecordList',
+    candidateId
+  })
+  return res
+}
+
+export const saveInterviewQaRecord = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewQaRecord',
+    ...data
+  })
+  return res
+}
+
+export const getInterviewResume = async (candidateId: number) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewResume',
+    candidateId
+  })
+  return res
+}
+
+export const saveInterviewResume = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewResume',
+    ...data
+  })
+  return res
+}
+
+export const getInterviewSystemConfig = async (key: string) => {
+  const res = await createWorkerPromise({
+    type: 'getInterviewSystemConfig',
+    key
+  })
+  return res
+}
+
+export const getAllInterviewSystemConfig = async () => {
+  const res = await createWorkerPromise({
+    type: 'getAllInterviewSystemConfig'
+  })
+  return res
+}
+
+export const saveInterviewSystemConfig = async (key: string, value: string, isEncrypted?: boolean) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewSystemConfig',
+    key,
+    value,
+    isEncrypted
+  })
+  return res
+}
+
+export const countInterviewCandidatesByStatus = async () => {
+  const res = await createWorkerPromise({
+    type: 'countInterviewCandidatesByStatus'
+  })
+  return res
+}

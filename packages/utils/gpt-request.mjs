@@ -10,6 +10,7 @@ export async function completes(
   messages
 ) {
   const openai = new OpenAI({
+    //实例化一个OpenAI类
     baseURL,
     apiKey,
   });

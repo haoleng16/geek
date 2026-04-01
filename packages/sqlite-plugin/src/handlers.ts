@@ -17,6 +17,14 @@ import { CandidateConversation } from "./entity/CandidateConversation";
 import { CandidateResumeRecord } from "./entity/CandidateResumeRecord";
 import { RecruiterProcessLog } from "./entity/RecruiterProcessLog";
 import { RecruiterDailyStats } from "./entity/RecruiterDailyStats";
+import { InterviewJobPosition } from "./entity/InterviewJobPosition";
+import { InterviewQuestionRound } from "./entity/InterviewQuestionRound";
+import { InterviewScoreRule } from "./entity/InterviewScoreRule";
+import { InterviewCandidate, InterviewCandidateStatus } from "./entity/InterviewCandidate";
+import { InterviewQaRecord } from "./entity/InterviewQaRecord";
+import { InterviewResume } from "./entity/InterviewResume";
+import { InterviewSystemConfig } from "./entity/InterviewSystemConfig";
+import { InterviewOperationLog } from "./entity/InterviewOperationLog";
 
 function getBossInfoIfIsEqual (savedOne, currentOne) {
   if (savedOne === currentOne) {
@@ -653,4 +661,411 @@ export async function getRecruiterProcessLogList(
   });
 
   return { list, total, page, pageSize };
+}
+
+// ==================== Interview Auto Handlers ====================
+
+/**
+ * 保存面试岗位配置
+ */
+export async function saveInterviewJobPosition(
+  ds: DataSource,
+  data: Partial<InterviewJobPosition>
+) {
+  const repo = ds.getRepository(InterviewJobPosition);
+  let entity: InterviewJobPosition;
+
+  if (data.id) {
+    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewJobPosition();
+  } else {
+    entity = new InterviewJobPosition();
+  }
+
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取面试岗位配置列表
+ */
+export async function getInterviewJobPositionList(ds: DataSource) {
+  const repo = ds.getRepository(InterviewJobPosition);
+  return await repo.find({
+    where: { isActive: true },
+    order: { createdAt: 'DESC' }
+  });
+}
+
+/**
+ * 获取面试岗位配置（含问题轮次和评分规则）
+ */
+export async function getInterviewJobPositionWithDetails(
+  ds: DataSource,
+  id: number
+) {
+  const repo = ds.getRepository(InterviewJobPosition);
+  const questionRoundRepo = ds.getRepository(InterviewQuestionRound);
+  const scoreRuleRepo = ds.getRepository(InterviewScoreRule);
+
+  const jobPosition = await repo.findOne({ where: { id } });
+  if (!jobPosition) return null;
+
+  const questionRounds = await questionRoundRepo.find({
+    where: { jobPositionId: id },
+    order: { roundNumber: 'ASC' }
+  });
+
+  const scoreRules = await scoreRuleRepo.find({
+    where: { jobPositionId: id }
+  });
+
+  return { ...jobPosition, questionRounds, scoreRules };
+}
+
+/**
+ * 删除面试岗位配置
+ */
+export async function deleteInterviewJobPosition(ds: DataSource, id: number) {
+  const repo = ds.getRepository(InterviewJobPosition);
+  await repo.delete(id);
+}
+
+/**
+ * 保存问题轮次
+ */
+export async function saveInterviewQuestionRound(
+  ds: DataSource,
+  data: Partial<InterviewQuestionRound>
+) {
+  const repo = ds.getRepository(InterviewQuestionRound);
+  let entity: InterviewQuestionRound;
+
+  if (data.id) {
+    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewQuestionRound();
+  } else {
+    entity = new InterviewQuestionRound();
+  }
+
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 删除问题轮次
+ */
+export async function deleteInterviewQuestionRound(ds: DataSource, id: number) {
+  const repo = ds.getRepository(InterviewQuestionRound);
+  await repo.delete(id);
+}
+
+/**
+ * 保存评分规则
+ */
+export async function saveInterviewScoreRule(
+  ds: DataSource,
+  data: Partial<InterviewScoreRule>
+) {
+  const repo = ds.getRepository(InterviewScoreRule);
+  let entity: InterviewScoreRule;
+
+  if (data.id) {
+    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewScoreRule();
+  } else {
+    entity = new InterviewScoreRule();
+  }
+
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 保存面试候选人
+ */
+export async function saveInterviewCandidate(
+  ds: DataSource,
+  data: Partial<InterviewCandidate>
+) {
+  const repo = ds.getRepository(InterviewCandidate);
+  let entity: InterviewCandidate;
+
+  if (data.id) {
+    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewCandidate();
+  } else if (data.encryptGeekId && data.encryptJobId) {
+    entity = await repo.findOne({
+      where: {
+        encryptGeekId: data.encryptGeekId,
+        encryptJobId: data.encryptJobId
+      }
+    }) || new InterviewCandidate();
+  } else {
+    entity = new InterviewCandidate();
+  }
+
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取面试候选人
+ */
+export async function getInterviewCandidate(
+  ds: DataSource,
+  encryptGeekId: string,
+  encryptJobId: string
+) {
+  const repo = ds.getRepository(InterviewCandidate);
+  return await repo.findOne({
+    where: { encryptGeekId, encryptJobId }
+  });
+}
+
+/**
+ * 获取面试候选人列表（分页）
+ */
+export async function getInterviewCandidateList(
+  ds: DataSource,
+  params: {
+    status?: string;
+    jobPositionId?: number;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  const repo = ds.getRepository(InterviewCandidate);
+  const { status, jobPositionId, page = 1, pageSize = 20 } = params;
+
+  const where: any = {};
+  if (status) where.status = status;
+  if (jobPositionId) where.jobPositionId = jobPositionId;
+
+  const [list, total] = await repo.findAndCount({
+    where,
+    order: { updatedAt: 'DESC' },
+    skip: (page - 1) * pageSize,
+    take: pageSize
+  });
+
+  return { list, total, page, pageSize };
+}
+
+/**
+ * 更新候选人状态
+ */
+export async function updateInterviewCandidateStatus(
+  ds: DataSource,
+  id: number,
+  status: string,
+  extraData?: Partial<InterviewCandidate>
+) {
+  const repo = ds.getRepository(InterviewCandidate);
+  const entity = await repo.findOne({ where: { id } });
+  if (!entity) return null;
+
+  entity.status = status;
+  if (extraData) {
+    Object.assign(entity, extraData);
+  }
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 保存问答记录
+ */
+export async function saveInterviewQaRecord(
+  ds: DataSource,
+  data: Partial<InterviewQaRecord>
+) {
+  const repo = ds.getRepository(InterviewQaRecord);
+  let entity: InterviewQaRecord;
+
+  if (data.id) {
+    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewQaRecord();
+  } else {
+    entity = new InterviewQaRecord();
+  }
+
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取候选人问答记录
+ */
+export async function getInterviewQaRecordList(
+  ds: DataSource,
+  candidateId: number
+) {
+  const repo = ds.getRepository(InterviewQaRecord);
+  return await repo.find({
+    where: { candidateId },
+    order: { roundNumber: 'ASC' }
+  });
+}
+
+/**
+ * 保存简历记录
+ */
+export async function saveInterviewResume(
+  ds: DataSource,
+  data: Partial<InterviewResume>
+) {
+  const repo = ds.getRepository(InterviewResume);
+  let entity: InterviewResume;
+
+  if (data.id) {
+    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewResume();
+  } else if (data.candidateId) {
+    entity = await repo.findOne({ where: { candidateId: data.candidateId } }) || new InterviewResume();
+  } else {
+    entity = new InterviewResume();
+  }
+
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取简历记录
+ */
+export async function getInterviewResume(
+  ds: DataSource,
+  candidateId: number
+) {
+  const repo = ds.getRepository(InterviewResume);
+  return await repo.findOne({ where: { candidateId } });
+}
+
+/**
+ * 保存系统配置
+ */
+export async function saveInterviewSystemConfig(
+  ds: DataSource,
+  key: string,
+  value: string,
+  isEncrypted: boolean = false
+) {
+  const repo = ds.getRepository(InterviewSystemConfig);
+  let entity = await repo.findOne({ where: { configKey: key } });
+
+  if (!entity) {
+    entity = new InterviewSystemConfig();
+    entity.configKey = key;
+  }
+
+  entity.configValue = value;
+  entity.isEncrypted = isEncrypted;
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取系统配置
+ */
+export async function getInterviewSystemConfig(
+  ds: DataSource,
+  key: string
+) {
+  const repo = ds.getRepository(InterviewSystemConfig);
+  const entity = await repo.findOne({ where: { configKey: key } });
+  return entity?.configValue;
+}
+
+/**
+ * 获取所有系统配置
+ */
+export async function getAllInterviewSystemConfig(ds: DataSource) {
+  const repo = ds.getRepository(InterviewSystemConfig);
+  const list = await repo.find();
+  const config: Record<string, any> = {};
+  for (const item of list) {
+    try {
+      config[item.configKey] = JSON.parse(item.configValue);
+    } catch {
+      config[item.configKey] = item.configValue;
+    }
+  }
+  return config;
+}
+
+/**
+ * 保存操作日志
+ */
+export async function saveInterviewOperationLog(
+  ds: DataSource,
+  data: Partial<InterviewOperationLog>
+) {
+  const repo = ds.getRepository(InterviewOperationLog);
+  const entity = new InterviewOperationLog();
+  Object.assign(entity, data);
+  await repo.save(entity);
+  return entity;
+}
+
+/**
+ * 获取操作日志列表
+ */
+export async function getInterviewOperationLogList(
+  ds: DataSource,
+  params: {
+    candidateId?: number;
+    action?: string;
+    page?: number;
+    pageSize?: number;
+  }
+) {
+  const repo = ds.getRepository(InterviewOperationLog);
+  const { candidateId, action, page = 1, pageSize = 50 } = params;
+
+  const where: any = {};
+  if (candidateId) where.candidateId = candidateId;
+  if (action) where.action = action;
+
+  const [list, total] = await repo.findAndCount({
+    where,
+    order: { createdAt: 'DESC' },
+    skip: (page - 1) * pageSize,
+    take: pageSize
+  });
+
+  return { list, total, page, pageSize };
+}
+
+/**
+ * 获取待处理的候选人（按状态）
+ */
+export async function getPendingInterviewCandidates(
+  ds: DataSource,
+  statuses: string[]
+) {
+  const repo = ds.getRepository(InterviewCandidate);
+  return await repo.find({
+    where: statuses.map(s => ({ status: s })),
+    order: { updatedAt: 'ASC' }
+  });
+}
+
+/**
+ * 统计候选人状态数量
+ */
+export async function countInterviewCandidatesByStatus(ds: DataSource) {
+  const repo = ds.getRepository(InterviewCandidate);
+  const result = await repo
+    .createQueryBuilder('candidate')
+    .select('candidate.status', 'status')
+    .addSelect('COUNT(*)', 'count')
+    .groupBy('candidate.status')
+    .getRawMany();
+
+  const stats: Record<string, number> = {};
+  for (const item of result) {
+    stats[item.status] = Number(item.count);
+  }
+  return stats;
 }
