@@ -7,7 +7,6 @@
 import { Browser, Page } from 'puppeteer'
 import { sleep } from '@geekgeekrun/utils/sleep.mjs'
 import { checkCookieListFormat } from '../../../common/utils/cookie'
-import { sendMessage } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
 import { getPublicDbFilePath, readStorageFile, writeStorageFile } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
 import type { DataSource } from 'typeorm'
@@ -232,6 +231,73 @@ async function loadBossPage(browser: Browser, page: Page): Promise<void> {
   console.log('[Interview ManualTest] 正在导航到:', defaultChatUiUrl)
   await page.goto(defaultChatUiUrl, { timeout: 120 * 1000, waitUntil: 'domcontentloaded' })
   console.log('[Interview ManualTest] 页面加载完成')
+}
+
+// 发送消息并验证
+async function sendMessageWithVerify(page: Page, text: string): Promise<boolean> {
+  try {
+    console.log('[Interview ManualTest] 开始发送消息...')
+
+    const chatInputSelector = `.chat-conversation .message-controls .chat-input`
+    const chatInputHandle = await page.$(chatInputSelector)
+
+    if (!chatInputHandle) {
+      console.error('[Interview ManualTest] 未找到聊天输入框')
+      return false
+    }
+
+    // 点击输入框获取焦点
+    await chatInputHandle.click()
+    await sleep(300)
+    await chatInputHandle.click()
+    await sleep(200)
+
+    // 清空现有内容
+    await page.evaluate(() => {
+      const input = document.querySelector('.chat-conversation .message-controls .chat-input') as HTMLTextAreaElement
+      if (input) {
+        input.value = ''
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+
+    // 输入文本
+    await chatInputHandle.type(text, { delay: 30 + Math.random() * 20 })
+    await sleep(500)
+
+    // 点击发送按钮
+    const sendButtonSelector = `.chat-conversation .message-controls .chat-op .btn-send:not(.disabled)`
+    const sendButton = await page.$(sendButtonSelector)
+
+    if (!sendButton) {
+      console.error('[Interview ManualTest] 未找到发送按钮')
+      return false
+    }
+
+    await sendButton.click()
+    console.log('[Interview ManualTest] 已点击发送按钮')
+
+    // 等待消息发送
+    await sleep(2000)
+
+    // 验证消息是否发送成功
+    const sent = await page.evaluate((msgText) => {
+      const messages = document.querySelectorAll('.chat-conversation .chat-record .message-item')
+      for (const msg of messages) {
+        const textEl = msg.querySelector('.message-text')
+        if (textEl && textEl.textContent?.includes(msgText.substring(0, 50))) {
+          return true
+        }
+      }
+      return false
+    }, text)
+
+    console.log('[Interview ManualTest] 消息发送结果:', sent ? '成功' : '未知')
+    return true
+  } catch (e) {
+    console.error('[Interview ManualTest] 发送消息失败:', e)
+    return false
+  }
 }
 
 /**
@@ -476,16 +542,12 @@ export async function runManualTest() {
     })
 
     if (nextIndex < 0) {
-      // 没有更多未读消息
-      const res = await dialog.showMessageBox({
-        type: 'info',
-        message: '处理完成',
-        detail: `已处理 ${processedCount} 条未读消息。\n\n是否继续检查新消息？`,
-        buttons: ['继续检查', '退出'],
-        defaultId: 0
-      })
+      // 没有更多未读消息，在浏览器中弹窗
+      const continueCheck = await page.evaluate((count) => {
+        return window.confirm(`处理完成\n\n已处理 ${count} 条未读消息。\n\n点击"确定"继续检查新消息，点击"取消"退出`)
+      }, processedCount)
 
-      if (res.response === 1) {
+      if (!continueCheck) {
         break
       }
       cursorIndex = 0
@@ -539,15 +601,12 @@ export async function runManualTest() {
 
     if (!matchedPosition) {
       console.log('[Interview ManualTest] 未匹配到岗位配置:', jobName)
-      const res = await dialog.showMessageBox({
-        type: 'warning',
-        message: `未匹配到岗位配置`,
-        detail: `候选人：${geekName}\n应聘岗位：${jobName}\n\n无法确定要发送的问题，是否跳过？`,
-        buttons: ['跳过', '退出'],
-        defaultId: 0
-      })
+      // 在浏览器中弹窗
+      const shouldContinue = await page.evaluate((name, job) => {
+        return window.confirm(`未匹配到岗位配置\n\n候选人：${name}\n应聘岗位：${job}\n\n无法确定要发送的问题。\n\n点击"确定"跳过并继续，点击"取消"退出`)
+      }, geekName, jobName)
 
-      if (res.response === 1) break
+      if (!shouldContinue) break
       cursorIndex += 1
       continue
     }
@@ -563,38 +622,38 @@ export async function runManualTest() {
 
     if (!questionData) {
       console.log('[Interview ManualTest] 该候选人已完成所有轮次')
-      const res = await dialog.showMessageBox({
-        type: 'info',
-        message: `候选人已完成所有面试轮次`,
-        detail: `候选人：${geekName}\n当前状态：第 ${(candidate?.currentRound || 0)} 轮\n\n是否跳过？`,
-        buttons: ['跳过', '退出'],
-        defaultId: 0
-      })
+      // 在浏览器中弹窗
+      const shouldContinue = await page.evaluate((name, round) => {
+        return window.confirm(`候选人已完成所有面试轮次\n\n候选人：${name}\n当前状态：第 ${round} 轮\n\n点击"确定"跳过并继续，点击"取消"退出`)
+      }, geekName, candidate?.currentRound || 0)
 
-      if (res.response === 1) break
+      if (!shouldContinue) break
       cursorIndex += 1
       continue
     }
 
-    // 弹窗确认
-    const res = await dialog.showMessageBox({
-      type: 'question',
-      message: `确认发送第 ${questionData.roundNumber} 轮问题`,
-      detail: `候选人：${geekName}\n应聘岗位：${jobName}\n匹配配置：${matchedPosition.name}\n当前轮次：第 ${(candidate?.currentRound || 0) + 1} 轮\n\n问题内容：\n${questionData.questionText}`,
-      buttons: ['发送', '跳过', '退出'],
-      defaultId: 0
-    })
+    // 弹窗确认 - 在浏览器中显示
+    const shouldSend = await page.evaluate((round, name, job, configName, currentRound, question) => {
+      const message = `确认发送第 ${round} 轮问题\n\n候选人：${name}\n应聘岗位：${job}\n匹配配置：${configName}\n当前轮次：第 ${currentRound} 轮\n\n问题内容：\n${question}\n\n点击"确定"发送，点击"取消"跳过`
+      return window.confirm(message)
+    }, questionData.roundNumber, geekName, jobName, matchedPosition.name, (candidate?.currentRound || 0) + 1, questionData.questionText)
 
-    if (res.response === 2) break // 退出
-    if (res.response === 1) {
+    if (!shouldSend) {
       // 跳过
+      console.log('[Interview ManualTest] 用户选择跳过')
       cursorIndex += 1
       continue
     }
 
     // 发送问题
     console.log('[Interview ManualTest] 发送问题:', questionData.questionText.substring(0, 50))
-    await sendMessage(page, questionData.questionText)
+    const sendSuccess = await sendMessageWithVerify(page, questionData.questionText)
+
+    if (!sendSuccess) {
+      console.log('[Interview ManualTest] 发送失败，跳过')
+      cursorIndex += 1
+      continue
+    }
 
     // 保存/更新候选人（仅当有 encryptJobId 时）
     if (encryptJobId) {
