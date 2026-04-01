@@ -20,6 +20,85 @@ import { initPuppeteer } from '@geekgeekrun/geek-auto-start-chat-with-boss/index
 let dataSource: DataSource | null = null
 const dbInitPromise = initDb(getPublicDbFilePath())
 
+// 滚动聊天列表以加载更多消息
+async function scrollChatList(page: Page): Promise<boolean> {
+  try {
+    const result = await page.evaluate(() => {
+      // BOSS直聘使用虚拟滚动，需要找到正确的滚动容器
+      const possibleContainers = [
+        '[role="group"]',
+        '.user-list',
+        '.chat-list',
+        '.geek-list',
+        '[class*="list"]'
+      ]
+
+      let scrolled = false
+      for (const selector of possibleContainers) {
+        const container = document.querySelector(selector)
+        if (container && container.scrollHeight > container.clientHeight) {
+          const oldScrollTop = container.scrollTop
+          container.scrollTop = container.scrollHeight
+          scrolled = oldScrollTop !== container.scrollTop
+          if (scrolled) {
+            console.log('[scrollChatList] 滚动容器:', selector)
+            break
+          }
+        }
+      }
+
+      return { scrolled }
+    })
+
+    return result.scrolled
+  } catch (e) {
+    console.log('[Interview ManualTest] 滚动失败:', e)
+    return false
+  }
+}
+
+// 发送消息
+async function sendChatMessage(page: Page, text: string): Promise<boolean> {
+  try {
+    console.log('[Interview ManualTest] 开始发送消息...')
+
+    // 使用正确的输入框选择器
+    const chatInputHandle = await page.$('.boss-chat-editor-input')
+
+    if (!chatInputHandle) {
+      console.error('[Interview ManualTest] 未找到聊天输入框')
+      return false
+    }
+
+    // 点击输入框获取焦点
+    await chatInputHandle.click()
+    await sleep(300)
+
+    // 清空现有内容
+    await page.evaluate(() => {
+      const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
+      if (input) {
+        input.value = ''
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+
+    // 输入文本
+    await chatInputHandle.type(text, { delay: 30 })
+    await sleep(500)
+
+    // 按 Enter 发送
+    await chatInputHandle.press('Enter')
+    console.log('[Interview ManualTest] 已按 Enter 发送')
+
+    await sleep(1000)
+    return true
+  } catch (e) {
+    console.error('[Interview ManualTest] 发送消息失败:', e)
+    return false
+  }
+}
+
 interface QuestionRound {
   id: number
   roundNumber: number
@@ -298,81 +377,80 @@ async function getFullGeekInfo(page: Page): Promise<{
 }
 
 // 滚动聊天列表以加载更多消息
-async function scrollChatList(page: Page, times: number = 3): Promise<void> {
-  for (let i = 0; i < times; i++) {
-    await page.evaluate(() => {
-      // 找到聊天列表容器并滚动
-      const listContainer = document.querySelector('[role="group"]') ||
-                           document.querySelector('.user-list') ||
-                           document.querySelector('.chat-list')
-      if (listContainer) {
-        listContainer.scrollTop = listContainer.scrollHeight
-      }
-    })
-    await sleep(500)
-  }
-}
-
-// 发送消息 - 使用正确的选择器
-async function sendChatMessage(page: Page, text: string): Promise<boolean> {
+async function scrollChatList(page: Page): Promise<boolean> {
   try {
-    console.log('[Interview ManualTest] 开始发送消息...')
+    const result = await page.evaluate(() => {
+      // BOSS直聘使用虚拟滚动，需要找到正确的滚动容器
+      // 尝试多种选择器
+      const possibleContainers = [
+        '[role="group"]',           // 虚拟滚动容器
+        '.user-list',
+        '.chat-list',
+        '.geek-list',
+        '[class*="list"]',
+        '.scroll-container'
+      ]
 
-    // 使用正确的输入框选择器
-    const chatInputSelector = `.boss-chat-editor-input`
-    const chatInputHandle = await page.$(chatInputSelector)
-
-    if (!chatInputHandle) {
-      console.error('[Interview ManualTest] 未找到聊天输入框，尝试其他选择器...')
-      // 尝试其他选择器
-      const altInput = await page.$('textarea[class*="chat"]')
-      if (!altInput) {
-        console.error('[Interview ManualTest] 仍未找到输入框')
-        return false
+      let scrolled = false
+      for (const selector of possibleContainers) {
+        const container = document.querySelector(selector)
+        if (container && container.scrollHeight > container.clientHeight) {
+          // 找到可滚动的容器
+          const oldScrollTop = container.scrollTop
+          container.scrollTop = container.scrollHeight
+          scrolled = oldScrollTop !== container.scrollTop
+          if (scrolled) {
+            console.log('[scrollChatList] 滚动容器:', selector, '滚动前:', oldScrollTop, '滚动后:', container.scrollTop)
+            break
+          }
+        }
       }
-      return sendWithInput(page, altInput, text)
-    }
 
-    return sendWithInput(page, chatInputHandle, text)
+      // 如果没找到可滚动的容器，尝试滚动整个文档
+      if (!scrolled) {
+        const oldScrollTop = document.documentElement.scrollTop || document.body.scrollTop
+        window.scrollTo(0, document.body.scrollHeight)
+        scrolled = oldScrollTop !== (document.documentElement.scrollTop || document.body.scrollTop)
+      }
+
+      return { scrolled }
+    })
+
+    return result.scrolled
   } catch (e) {
-    console.error('[Interview ManualTest] 发送消息失败:', e)
+    console.log('[Interview ManualTest] 滚动失败:', e)
     return false
   }
 }
 
-async function sendWithInput(page: Page, inputHandle: any, text: string): Promise<boolean> {
-  // 点击输入框获取焦点
-  await inputHandle.click()
-  await sleep(300)
-  await inputHandle.click()
-  await sleep(200)
+// 滚动并等待新消息加载
+async function scrollAndWaitForNewMessages(page: Page, currentCount: number, maxAttempts: number = 5): Promise<number> {
+  let attempts = 0
+  let newCount = currentCount
 
-  // 清空现有内容
-  await page.evaluate(() => {
-    const input = document.querySelector('.boss-chat-editor-input') as HTMLTextAreaElement
-    if (input) {
-      input.value = ''
-      input.dispatchEvent(new Event('input', { bubbles: true }))
+  while (attempts < maxAttempts) {
+    const scrolled = await scrollChatList(page)
+    if (!scrolled) {
+      console.log('[Interview ManualTest] 无法继续滚动')
+      break
     }
-  })
 
-  // 输入文本
-  await inputHandle.type(text, { delay: 30 + Math.random() * 20 })
-  await sleep(500)
+    await sleep(1000)
 
-  // 查找发送按钮
-  const sendButton = await page.$('.chat-send-btn, button[class*="send"]')
-  if (sendButton) {
-    await sendButton.click()
-    console.log('[Interview ManualTest] 已点击发送按钮')
-  } else {
-    // 尝试按 Enter 发送
-    await inputHandle.press('Enter')
-    console.log('[Interview ManualTest] 已按 Enter 发送')
+    // 获取新的聊天项数量
+    const count = await page.evaluate(() => {
+      return document.querySelectorAll('[role="listitem"]').length
+    })
+
+    if (count > newCount) {
+      console.log('[Interview ManualTest] 滚动后聊天项数量:', count, '(增加', count - newCount, '个)')
+      newCount = count
+    }
+
+    attempts++
   }
 
-  await sleep(1000)
-  return true
+  return newCount
 }
 
 export async function runManualTest() {
@@ -473,12 +551,7 @@ export async function runManualTest() {
         break
       }
 
-      // 先滚动聊天列表加载更多消息
-      console.log('[Interview ManualTest] 滚动聊天列表...')
-      await scrollChatList(page, 3)
-      await sleep(1000)
-
-      // 获取聊天列表 - 采用与 SMART_REPLY_MAIN 相同的方式从 Vue 组件提取数据
+      // 获取聊天列表
       const friendListData = await page.evaluate(() => {
         // 获取所有聊天项（只取 role="listitem" 的元素，避免重复）
         const items = document.querySelectorAll('[role="listitem"]')
@@ -558,20 +631,66 @@ export async function runManualTest() {
     })
 
     if (nextIndex < 0) {
-      // 没有更多未读消息
-      const res = await dialog.showMessageBox({
-        type: 'info',
-        message: '处理完成',
-        detail: `已处理 ${processedCount} 条未读消息。\n\n是否继续检查新消息？`,
-        buttons: ['继续检查', '退出'],
-        defaultId: 0
-      })
+      // 当前列表没有未读消息，尝试滚动加载更多
+      console.log('[Interview ManualTest] 当前列表无未读消息，尝试滚动加载更多...')
 
-      if (res.response === 1) {
-        break
+      let scrollAttempts = 0
+      let foundNew = false
+
+      while (scrollAttempts < 5 && !foundNew) {
+        const scrolled = await scrollChatList(page)
+        if (!scrolled) {
+          console.log('[Interview ManualTest] 无法继续滚动')
+          break
+        }
+
+        await sleep(1500)
+
+        // 重新获取聊天列表
+        const newListData = await page.evaluate(() => {
+          const items = document.querySelectorAll('[role="listitem"]')
+          return [...items].map(el => {
+            const geekItemEl = el.querySelector('.geek-item') || el
+            const textContent = (geekItemEl as HTMLElement)?.innerText || (el as HTMLElement)?.innerText || ''
+            const textLines = textContent.split('\n').filter(line => line.trim())
+            let unreadCount = 0
+            if (textLines.length >= 4) {
+              const firstLine = textLines[0]
+              if (/^\d+$/.test(firstLine) && textLines.length >= 5) {
+                unreadCount = parseInt(firstLine) || 0
+              }
+            }
+            return { unreadCount }
+          })
+        })
+
+        // 检查是否有未读消息
+        const hasUnread = newListData.some((it: any) => it.unreadCount > 0)
+        if (hasUnread) {
+          console.log('[Interview ManualTest] 滚动后发现未读消息')
+          foundNew = true
+          break
+        }
+
+        scrollAttempts++
       }
-      cursorIndex = 0
-      await sleep(5000)
+
+      if (!foundNew) {
+        // 多次滚动都没有未读消息
+        const res = await dialog.showMessageBox({
+          type: 'info',
+          message: '处理完成',
+          detail: `已处理 ${processedCount} 条未读消息。\n\n当前列表共 ${friendListData.length} 个聊天项，未发现更多未读消息。\n\n是否继续检查新消息？`,
+          buttons: ['继续检查', '退出'],
+          defaultId: 0
+        })
+
+        if (res.response === 1) {
+          break
+        }
+        cursorIndex = 0
+        await sleep(5000)
+      }
       continue
     }
 
