@@ -3,6 +3,39 @@
   "version": "0.0.2",
   "description": "",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./handlers": {
+      "types": "./dist/handlers.d.ts",
+      "default": "./dist/handlers.js"
+    },
+    "./entity/*": {
+      "types": "./dist/entity/*.d.ts",
+      "default": "./dist/entity/*.js"
+    },
+    "./dist/handlers": {
+      "default": "./dist/handlers.js"
+    },
+    "./dist/enums": {
+      "default": "./dist/enums.js"
+    },
+    "./dist/entity/*": {
+      "default": "./dist/entity/*.js"
+    },
+    "./dist/utils/*": {
+      "default": "./dist/utils/*.js"
+    },
+    "./src/enums": {
+      "default": "./dist/enums.js"
+    },
+    "./src/entity/*": {
+      "default": "./dist/entity/*.js"
+    }
+  },
   "dependencies": {
     "better-sqlite3": "12.6.2",
     "cli-highlight": "^2.1.11",

@@ -200,6 +200,7 @@ async function loadStats() {
 function handleFilterChange() {
   pagination.page = 1
   loadCandidates()
+  loadStats()
 }
 
 async function handleViewDetail(row: any) {

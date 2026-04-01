@@ -26,6 +26,10 @@ export class InterviewJobPosition {
   @Column({ nullable: true })
   encryptJobId: string;              // BOSS直聘职位ID（用于匹配）
 
+  // 新增：简历邀约话术
+  @Column({ nullable: true, type: 'text' })
+  resumeInviteText: string;          // 通过所有轮次后发送的简历邀约话术
+
   @CreateDateColumn()
   createdAt: Date;
 

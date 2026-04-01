@@ -215,3 +215,95 @@ export async function mergeMultipleAnswers(
     return ''
   }
 }
+
+/**
+ * 检查消息发送者是否是自己（招聘者）
+ */
+export function isSelfMessage(msg: any): boolean {
+  return msg.isSelf || msg.self || msg.fromSelf || msg.sender === 'recruiter'
+}
+
+/**
+ * 检查最新消息是否来自候选人（非招聘者发送）
+ */
+export async function isLatestMessageFromCandidate(page: Page): Promise<boolean> {
+  const history = await getChatHistory(page)
+  if (!history || history.length === 0) return false
+
+  const latestMsg = history[history.length - 1]
+  return !isSelfMessage(latestMsg)
+}
+
+/**
+ * 合并30秒时间窗口内的多条消息
+ * 用于将候选人连续发送的多条消息合并为一条答案
+ */
+export async function mergeMessagesInWindow(
+  page: Page,
+  candidate: InterviewCandidate,
+  windowSeconds: number = 30
+): Promise<{ mergedText: string; messages: any[] }> {
+  try {
+    const history = await getChatHistory(page)
+
+    if (!history || history.length === 0) {
+      return { mergedText: '', messages: [] }
+    }
+
+    // 筛选候选人的消息（非自己发送的）
+    const candidateMessages = history
+      .filter(msg => !isSelfMessage(msg))
+      .filter(msg => {
+        // 只取发送问题后的消息
+        if (!candidate.lastQuestionAt) return false
+        const msgTime = msg.time ? new Date(msg.time) : new Date()
+        return msgTime.getTime() >= new Date(candidate.lastQuestionAt).getTime()
+      })
+
+    if (candidateMessages.length === 0) {
+      return { mergedText: '', messages: [] }
+    }
+
+    // 按时间排序
+    candidateMessages.sort((a, b) => {
+      const timeA = a.time ? new Date(a.time).getTime() : 0
+      const timeB = b.time ? new Date(b.time).getTime() : 0
+      return timeA - timeB
+    })
+
+    // 合并30秒窗口内的消息
+    const merged: any[] = []
+    let currentGroup: any[] = [candidateMessages[0]]
+
+    for (let i = 1; i < candidateMessages.length; i++) {
+      const prevMsg = candidateMessages[i - 1]
+      const currMsg = candidateMessages[i]
+
+      const prevTime = prevMsg.time ? new Date(prevMsg.time).getTime() : 0
+      const currTime = currMsg.time ? new Date(currMsg.time).getTime() : 0
+
+      if (currTime - prevTime <= windowSeconds * 1000) {
+        // 在时间窗口内，合并到当前组
+        currentGroup.push(currMsg)
+      } else {
+        // 超出时间窗口，保存当前组并开始新组
+        merged.push(...currentGroup)
+        currentGroup = [currMsg]
+      }
+    }
+    merged.push(...currentGroup)
+
+    // 合并文本
+    const mergedText = merged
+      .map(msg => msg.text || msg.content || msg.message || '')
+      .filter(text => text.trim())
+      .join('\n\n')
+
+    console.log(`[AnswerCollector] 合并了 ${merged.length} 条消息，时间窗口: ${windowSeconds}秒`)
+
+    return { mergedText, messages: merged }
+  } catch (error) {
+    console.error('[AnswerCollector] 消息合并失败:', error)
+    return { mergedText: '', messages: [] }
+  }
+}

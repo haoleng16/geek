@@ -111,13 +111,16 @@ export async function sendInterviewQuestion(
 
 /**
  * 发送简历请求
+ * 支持自定义邀约话术
  */
 export async function sendResumeRequest(
   ds: DataSource,
   page: Page,
-  candidate: InterviewCandidate
+  candidate: InterviewCandidate,
+  inviteText?: string
 ): Promise<boolean> {
-  const resumeRequestText = '您好，您的回答通过了我们的初步筛选，请问可以发一份简历给我们吗？期待您的回复！'
+  const defaultText = '您好，您的回答通过了我们的初步筛选，请问可以发一份简历给我们吗？期待您的回复！'
+  const resumeRequestText = inviteText || defaultText
 
   try {
     console.log(`[QuestionSender] 发送简历请求给 ${candidate.geekName}`)

@@ -28,10 +28,10 @@ import { sendMessage } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
 // 导入面试模块
 import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
 import { sendInterviewQuestion, sendResumeRequest, sendRejectionMessage } from './question-sender'
-import { getLatestCandidateAnswer, saveCandidateAnswer } from './answer-collector'
+import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, isLatestMessageFromCandidate } from './answer-collector'
 import { scoreAnswer, saveScoreResult } from './scorer'
 import { detectResumeSent, downloadResume } from './resume-handler'
-import { sendResumeEmail } from './email-sender'
+import { sendResumeEmail, startEmailScheduler, getCandidatesByStatus } from './email-sender'
 import { isAnswerTimeout, shouldSendNextRound } from './status-manager'
 import { randomDelay, canSendMessage, recordMessageSent, getRiskControlConfig, isWithinWorkHours } from './risk-control'
 import {
@@ -305,6 +305,10 @@ const mainLoop = async () => {
 
 /**
  * 根据状态处理候选人
+ * 新逻辑：
+ * 1. 使用问题轮次的 keywords 和 llmPrompt 配置
+ * 2. 30秒时间窗口合并消息
+ * 3. 固定权重评分（关键词 0.7 + LLM 0.3）
  */
 async function handleCandidateByStatus(
   ds: DataSource,
@@ -324,52 +328,101 @@ async function handleCandidateByStatus(
     case InterviewCandidateStatus.WAITING_ROUND_1:
     case InterviewCandidateStatus.WAITING_ROUND_2:
     case InterviewCandidateStatus.WAITING_ROUND_N:
-      // 检查是否有新回复
-      const answer = await getLatestCandidateAnswer(page, candidate)
-      if (!answer) {
-        // 检查是否超时
-        if (isAnswerTimeout(candidate, config.defaultTimeoutMinutes)) {
-          console.log('[Interview MainLoop] 回复超时，标记为拒绝')
-          await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.REJECTED)
-        }
+      // 检查最新消息是否来自候选人
+      const isFromCandidate = await isLatestMessageFromCandidate(page)
+      if (!isFromCandidate) {
+        console.log('[Interview MainLoop] 最新消息不是候选人发送的，跳过')
         break
       }
 
-      // 保存回复
-      await saveCandidateAnswer(ds, candidate, answer)
+      // 合并30秒窗口内的消息
+      const { mergedText } = await mergeMessagesInWindow(page, candidate, 30)
+      if (!mergedText) {
+        console.log('[Interview MainLoop] 未找到候选人回复内容')
+        break
+      }
 
-      // 获取问题
-      const qaRecords = await getInterviewQaRecordList(ds, candidate.id!)
-      const currentQa = qaRecords.find(r => r.roundNumber === candidate.currentRound)
+      console.log('[Interview MainLoop] 合并回复:', mergedText.substring(0, 100))
 
-      // 评分
-      const scoreRule = jobPosition.scoreRules?.find((r: any) => r.roundNumber === candidate.currentRound)
-      if (scoreRule && currentQa) {
-        const scoreResult = await scoreAnswer(
-          ds, candidate,
-          currentQa.questionText,
-          answer.text,
-          scoreRule,
-          jobPosition.passThreshold
-        )
+      // 获取问题轮次配置
+      const questionRound = jobPosition.questionRounds?.find((r: any) => r.roundNumber === candidate.currentRound)
+      if (!questionRound) {
+        console.log('[Interview MainLoop] 未找到当前轮次配置')
+        break
+      }
 
-        await saveScoreResult(ds, candidate, candidate.currentRound, scoreResult)
+      // 评分（使用新的评分逻辑）
+      const scoreResult = await scoreAnswer(
+        ds,
+        candidate,
+        questionRound.questionText,
+        mergedText,
+        questionRound,
+        jobPosition.passThreshold
+      )
 
-        if (scoreResult.passed) {
-          // 检查是否有下一轮
-          const { hasNext, nextRound } = await shouldSendNextRound(ds, candidate)
+      // 保存问答记录（含评分）
+      const qaRepo = ds.getRepository('InterviewQaRecord')
+      const existingRecord = await qaRepo.findOne({
+        where: { candidateId: candidate.id, roundNumber: candidate.currentRound }
+      })
 
-          if (hasNext && nextRound) {
-            // 发送下一轮问题
-            await sendInterviewQuestion(ds, page, candidate, nextRound)
-          } else {
-            // 全部通过，发送简历邀请
-            await sendResumeRequest(ds, page, candidate)
-          }
+      if (existingRecord) {
+        await qaRepo.update(existingRecord.id!, {
+          answerText: mergedText,
+          answeredAt: new Date(),
+          keywordScore: scoreResult.keywordScore,
+          llmScore: scoreResult.llmScore,
+          totalScore: scoreResult.totalScore,
+          llmReason: scoreResult.llmReason,
+          matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
+          scoredAt: new Date()
+        })
+      } else {
+        await qaRepo.save(qaRepo.create({
+          candidateId: candidate.id,
+          roundNumber: candidate.currentRound,
+          questionText: questionRound.questionText,
+          answerText: mergedText,
+          answeredAt: new Date(),
+          questionSentAt: candidate.lastQuestionAt,
+          keywordScore: scoreResult.keywordScore,
+          llmScore: scoreResult.llmScore,
+          totalScore: scoreResult.totalScore,
+          llmReason: scoreResult.llmReason,
+          matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
+          scoredAt: new Date()
+        }))
+      }
+
+      // 更新候选人得分
+      const candRepo = ds.getRepository('InterviewCandidate')
+      await candRepo.update(candidate.id!, {
+        totalScore: scoreResult.totalScore,
+        keywordScore: scoreResult.keywordScore,
+        llmScore: scoreResult.llmScore,
+        llmReason: scoreResult.llmReason,
+        lastReplyAt: new Date()
+      })
+
+      console.log(`[Interview MainLoop] 评分结果: ${scoreResult.totalScore}分, 通过: ${scoreResult.passed}`)
+
+      if (scoreResult.passed) {
+        // 检查是否有下一轮
+        const { hasNext, nextRound } = await shouldSendNextRound(ds, candidate)
+
+        if (hasNext && nextRound) {
+          // 发送下一轮问题
+          await sendInterviewQuestion(ds, page, candidate, nextRound)
         } else {
-          // 未通过，发送拒绝消息
-          await sendRejectionMessage(ds, page, candidate)
+          // 全部通过，发送简历邀请（使用自定义话术）
+          const inviteText = jobPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+          await sendResumeRequest(ds, page, candidate, inviteText)
         }
+      } else {
+        // 未通过，发送拒绝消息
+        await sendRejectionMessage(ds, page, candidate)
+        await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.REJECTED)
       }
       break
 

@@ -76,12 +76,18 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@renderer': resolve('src/renderer/src')
+        '@renderer': resolve('src/renderer/src'),
+        '@geekgeekrun/sqlite-plugin/src/enums': resolve('../sqlite-plugin/src/enums.ts'),
+        '@geekgeekrun/sqlite-plugin/src/entity': resolve('../sqlite-plugin/src/entity')
       }
     },
     plugins: rendererPlugins,
     build: {
       minify: process.env.NODE_ENV === 'development' ? undefined : 'terser'
+    },
+    optimizeDeps: {
+      // 强制预构建这些包
+      include: ['@geekgeekrun/sqlite-plugin']
     }
   }
 })

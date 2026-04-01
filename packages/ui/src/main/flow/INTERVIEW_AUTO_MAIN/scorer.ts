@@ -11,6 +11,7 @@ import { saveInterviewQaRecord, getInterviewQaRecordList, updateInterviewCandida
 import { InterviewCandidateStatus } from '@geekgeekrun/sqlite-plugin/entity/InterviewCandidate'
 import type { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/entity/InterviewCandidate'
 import type { InterviewScoreRule } from '@geekgeekrun/sqlite-plugin/entity/InterviewScoreRule'
+import type { InterviewQuestionRound } from '@geekgeekrun/sqlite-plugin/entity/InterviewQuestionRound'
 import type { ChatMessage } from '../RECRUITER_AUTO_REPLY_MAIN/llm-reply'
 
 export interface ScoreResult {
@@ -18,6 +19,7 @@ export interface ScoreResult {
   keywordScore: number
   llmScore: number
   llmReason: string
+  matchedKeywords: string[]
   passed: boolean
 }
 
@@ -53,28 +55,54 @@ const DEFAULT_SCORING_PROMPT = `你是一个专业的招聘助手，请根据候
 
 /**
  * 计算关键词得分
+ * 新逻辑：包含任意关键词即满分（100分）
+ * keywordsJson 格式支持两种：
+ *   1. 简单字符串数组: ["redis", "cache"]
+ *   2. 带权重的对象数组: [{"keyword": "redis", "weight": 10}, {"keyword": "cache", "weight": 5}]
  */
-export function calculateKeywordScore(answer: string, keywordsJson: string): number {
+export function calculateKeywordScore(
+  answer: string,
+  keywordsJson: string
+): { score: number; matchedKeywords: string[] } {
   try {
-    if (!keywordsJson || !answer) return 0
+    if (!keywordsJson || !answer) {
+      return { score: 0, matchedKeywords: [] }
+    }
 
-    const keywords: string[] = JSON.parse(keywordsJson)
-    if (!keywords || keywords.length === 0) return 0
+    const keywordsData = JSON.parse(keywordsJson)
+    if (!keywordsData || keywordsData.length === 0) {
+      return { score: 0, matchedKeywords: [] }
+    }
 
     const answerLower = answer.toLowerCase()
-    let matchCount = 0
+    const matchedKeywords: string[] = []
 
-    for (const keyword of keywords) {
-      if (answerLower.includes(keyword.toLowerCase())) {
-        matchCount++
+    // 支持两种格式
+    if (typeof keywordsData[0] === 'string') {
+      // 简单字符串数组格式
+      for (const keyword of keywordsData as string[]) {
+        if (answerLower.includes(keyword.toLowerCase())) {
+          matchedKeywords.push(keyword)
+        }
+      }
+    } else if (keywordsData[0]?.keyword) {
+      // 带权重的对象数组格式
+      for (const kw of keywordsData as Array<{ keyword: string; weight: number }>) {
+        if (answerLower.includes(kw.keyword.toLowerCase())) {
+          matchedKeywords.push(kw.keyword)
+        }
       }
     }
 
-    // 计算得分：匹配比例 * 100
-    return Math.round((matchCount / keywords.length) * 100)
+    // 包含任意关键词即满分（100分）
+    const score = matchedKeywords.length > 0 ? 100 : 0
+
+    console.log(`[Scorer] 关键词匹配结果: 匹配了 ${matchedKeywords.length} 个关键词: ${matchedKeywords.join(', ')}`)
+
+    return { score, matchedKeywords }
   } catch (error) {
     console.error('[Scorer] 关键词评分失败:', error)
-    return 0
+    return { score: 0, matchedKeywords: [] }
   }
 }
 
@@ -172,38 +200,53 @@ function parseLlmScoringResponse(content: string): { score: number; reason: stri
 
 /**
  * 综合评分
+ * 新逻辑：固定权重（关键词 0.7 + LLM 0.3）
+ * 使用问题轮次的配置（keywords 和 llmPrompt）
  */
 export async function scoreAnswer(
   ds: DataSource,
   candidate: InterviewCandidate,
   question: string,
   answer: string,
-  scoreRule: InterviewScoreRule,
+  questionRound: InterviewQuestionRound,
   passThreshold: number
 ): Promise<ScoreResult> {
   try {
     console.log(`[Scorer] 开始评分，候选人: ${candidate.geekName}`)
 
-    // 1. 关键词评分
-    const keywordScore = calculateKeywordScore(answer, scoreRule.keywords)
-    console.log(`[Scorer] 关键词得分: ${keywordScore}`)
+    // 固定权重
+    const KEYWORD_WEIGHT = 0.7
+    const LLM_WEIGHT = 0.3
 
-    // 2. LLM 评分
-    const llmResult = await scoreWithLLM(question, answer)
+    // 1. 关键词评分（使用问题轮次的 keywords 配置）
+    const keywordResult = calculateKeywordScore(answer, questionRound.keywords || '[]')
+    console.log(`[Scorer] 关键词得分: ${keywordResult.score}, 匹配关键词: ${keywordResult.matchedKeywords.join(', ')}`)
+
+    // 2. LLM 评分（使用问题轮次的自定义提示词）
+    let llmResult
+    try {
+      llmResult = await scoreWithLLM(question, answer, questionRound.llmPrompt)
+    } catch (error) {
+      // LLM 失败降级：使用关键词评分 + 默认LLM分50
+      console.warn('[Scorer] LLM评分失败，使用降级策略')
+      llmResult = { score: 50, reason: 'LLM评分失败，使用默认分数' }
+    }
     console.log(`[Scorer] LLM 得分: ${llmResult.score}, 原因: ${llmResult.reason}`)
 
-    // 3. 计算加权总分
-    const keywordWeight = scoreRule.keywordScore / 100
-    const llmWeight = scoreRule.llmScore / 100
-    const totalScore = Math.round(keywordScore * keywordWeight + llmResult.score * llmWeight)
+    // 3. 计算加权总分（固定权重）
+    const totalScore = Math.round(
+      keywordResult.score * KEYWORD_WEIGHT +
+      llmResult.score * LLM_WEIGHT
+    )
 
-    console.log(`[Scorer] 总分: ${totalScore} (关键词权重: ${keywordWeight}, LLM权重: ${llmWeight})`)
+    console.log(`[Scorer] 总分: ${totalScore} (关键词权重: ${KEYWORD_WEIGHT}, LLM权重: ${LLM_WEIGHT})`)
 
     const result: ScoreResult = {
       totalScore,
-      keywordScore,
+      keywordScore: keywordResult.score,
       llmScore: llmResult.score,
       llmReason: llmResult.reason,
+      matchedKeywords: keywordResult.matchedKeywords,
       passed: totalScore >= passThreshold
     }
 
@@ -215,6 +258,7 @@ export async function scoreAnswer(
       keywordScore: 0,
       llmScore: 0,
       llmReason: '评分过程出错',
+      matchedKeywords: [],
       passed: false
     }
   }
@@ -230,7 +274,7 @@ export async function saveScoreResult(
   scoreResult: ScoreResult
 ): Promise<void> {
   try {
-    // 更新问答记录的评分
+    // 更新问答记录的评分（包含新增字段）
     const qaRecords = await getInterviewQaRecordList(ds, candidate.id!)
     const roundRecord = qaRecords.find(r => r.roundNumber === roundNumber)
 
@@ -239,7 +283,10 @@ export async function saveScoreResult(
         id: roundRecord.id,
         keywordScore: scoreResult.keywordScore,
         llmScore: scoreResult.llmScore,
-        llmReason: scoreResult.llmReason
+        llmReason: scoreResult.llmReason,
+        totalScore: scoreResult.totalScore,
+        matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
+        scoredAt: new Date()
       })
     }
 
@@ -270,25 +317,29 @@ export async function saveScoreResult(
 export async function batchScore(
   questions: string[],
   answers: string[],
-  scoreRules: InterviewScoreRule[]
+  keywordsJsons: string[],
+  llmPrompts?: string[]
 ): Promise<ScoreResult[]> {
   const results: ScoreResult[] = []
 
   for (let i = 0; i < questions.length; i++) {
-    const rule = scoreRules[i] || scoreRules[0]
-    const keywordScore = calculateKeywordScore(answers[i], rule.keywords)
-    const llmResult = await scoreWithLLM(questions[i], answers[i])
+    const keywordsJson = keywordsJsons[i] || '[]'
+    const llmPrompt = llmPrompts?.[i]
+
+    const keywordResult = calculateKeywordScore(answers[i], keywordsJson)
+    const llmResult = await scoreWithLLM(questions[i], answers[i], llmPrompt)
 
     const totalScore = Math.round(
-      keywordScore * (rule.keywordScore / 100) +
-      llmResult.score * (rule.llmScore / 100)
+      keywordResult.score * 0.7 +
+      llmResult.score * 0.3
     )
 
     results.push({
       totalScore,
-      keywordScore,
+      keywordScore: keywordResult.score,
       llmScore: llmResult.score,
       llmReason: llmResult.reason,
+      matchedKeywords: keywordResult.matchedKeywords,
       passed: totalScore >= 60
     })
   }

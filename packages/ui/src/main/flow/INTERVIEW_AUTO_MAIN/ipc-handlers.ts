@@ -29,7 +29,7 @@ import {
   saveInterviewOperationLog,
   countInterviewCandidatesByStatus
 } from '@geekgeekrun/sqlite-plugin/handlers'
-import { testSmtpConnection } from './email-sender'
+import { testSmtpConnection, startEmailScheduler, stopEmailScheduler, triggerManualSummaryEmail } from './email-sender'
 import { testLlmConnection } from '../SMART_REPLY_MAIN/llm-reply'
 
 let dataSource: DataSource
@@ -273,6 +273,38 @@ export function initInterviewIpcHandlers(ds: DataSource) {
     }
   })
 
+  // ==================== 邮件调度 ====================
+
+  // 启动邮件调度器
+  ipcMain.handle('interview-start-email-scheduler', async () => {
+    try {
+      await startEmailScheduler(dataSource)
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error?.message }
+    }
+  })
+
+  // 停止邮件调度器
+  ipcMain.handle('interview-stop-email-scheduler', async () => {
+    try {
+      await stopEmailScheduler()
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error?.message }
+    }
+  })
+
+  // 手动触发汇总邮件
+  ipcMain.handle('interview-trigger-summary-email', async () => {
+    try {
+      const result = await triggerManualSummaryEmail(dataSource)
+      return { success: true, data: result }
+    } catch (error: any) {
+      return { success: false, error: error?.message }
+    }
+  })
+
   console.log('[Interview IPC] IPC handlers initialized')
 }
 
@@ -297,7 +329,10 @@ export function removeInterviewIpcHandlers() {
     'interview-test-smtp',
     'interview-save-email-config',
     'interview-get-logs',
-    'interview-test-llm'
+    'interview-test-llm',
+    'interview-start-email-scheduler',
+    'interview-stop-email-scheduler',
+    'interview-trigger-summary-email'
   ]
 
   for (const channel of channels) {

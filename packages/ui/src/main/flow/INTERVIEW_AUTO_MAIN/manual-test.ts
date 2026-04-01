@@ -16,6 +16,9 @@ import { configWithBrowserAssistant } from '../../features/config-with-browser-a
 import type { ChatListItem } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/types'
 import { setDomainLocalStorage } from '@geekgeekrun/utils/puppeteer/local-storage.mjs'
 import { initPuppeteer } from '@geekgeekrun/geek-auto-start-chat-with-boss/index.mjs'
+import { scoreAnswer, saveScoreResult } from './scorer'
+import { mergeMessagesInWindow, isLatestMessageFromCandidate, getChatHistory, isSelfMessage } from './answer-collector'
+import type { ScoreResult } from './scorer'
 
 let dataSource: DataSource | null = null
 const dbInitPromise = initDb(getPublicDbFilePath())
@@ -152,8 +155,8 @@ interface QuestionRound {
   id: number
   roundNumber: number
   questionText: string
-  waitTimeoutMinutes: number
-  keywords: string
+  keywords: string              // JSON格式关键词配置
+  llmPrompt: string             // 自定义LLM评分提示词
 }
 
 interface JobPosition {
@@ -162,6 +165,7 @@ interface JobPosition {
   description: string
   passThreshold: number
   isActive: boolean
+  resumeInviteText: string      // 简历邀约话术
   questionRounds: QuestionRound[]
 }
 
@@ -293,6 +297,30 @@ function getQuestionToSend(candidate: Candidate | null, position: JobPosition): 
     roundNumber: nextRound,
     questionText: nextRoundData.questionText
   }
+}
+
+// 获取问题轮次配置
+function getQuestionRound(position: JobPosition, roundNumber: number): QuestionRound | null {
+  return position.questionRounds.find(r => r.roundNumber === roundNumber)
+}
+
+// 发送简历邀约话术
+async function sendResumeInvite(page: Page, inviteText: string): Promise<boolean> {
+  if (!inviteText) {
+    // 使用默认话术
+    inviteText = '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+  }
+  console.log('[Interview ManualTest] 发送简历邀约话术...')
+  return await sendChatMessage(page, inviteText)
+}
+
+// 获取下一轮等待状态
+function getNextWaitingStatus(currentStatus: string): string {
+  const roundMatch = currentStatus.match(/waiting_round_(\d+)/)
+  if (!roundMatch) return 'waiting_round_1'
+
+  const currentRound = parseInt(roundMatch[1])
+  return `waiting_round_${currentRound + 1}`
 }
 
 // 更新候选人状态
@@ -458,505 +486,760 @@ async function scrollAndWaitForNewMessages(page: Page, currentCount: number, max
 export async function runManualTest() {
   console.log('[Interview ManualTest] 开始执行...')
 
-  // 初始化数据库
-  dataSource = await dbInitPromise
-  console.log('[Interview ManualTest] 数据库初始化完成')
+  try {
+    // 初始化数据库
+    dataSource = await dbInitPromise
+    console.log('[Interview ManualTest] 数据库初始化完成')
 
-  // 获取岗位配置
-  const jobPositions = await getJobPositions(dataSource!)
-  console.log('[Interview ManualTest] 岗位配置数量:', jobPositions.length)
+    // 获取岗位配置
+    const jobPositions = await getJobPositions(dataSource!)
+    console.log('[Interview ManualTest] 岗位配置数量:', jobPositions.length)
 
-  if (jobPositions.length === 0) {
-    await dialog.showMessageBox({
-      type: 'warning',
-      message: '没有可用的岗位配置',
-      detail: '请先在"面试自动化"页面添加岗位配置。',
-      buttons: ['确定']
-    })
-    return
-  }
-
-  // 检查浏览器
-  let puppeteerExecutable = await getLastUsedAndAvailableBrowser()
-  if (!puppeteerExecutable) {
-    try {
-      await configWithBrowserAssistant({ autoFind: true })
-    } catch (e) {
-      console.error('[Interview ManualTest] 浏览器配置失败:', e)
+    if (jobPositions.length === 0) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        message: '没有可用的岗位配置',
+        detail: '请先在"面试自动化"页面添加岗位配置。',
+        buttons: ['确定']
+      })
+      return
     }
-    puppeteerExecutable = await getLastUsedAndAvailableBrowser()
-  }
 
-  if (!puppeteerExecutable) {
-    await dialog.showMessageBox({
-      type: 'error',
-      message: '未找到可用的浏览器',
-      detail: '请先配置浏览器。',
-      buttons: ['确定']
-    })
-    return
-  }
+    // 检查浏览器
+    let puppeteerExecutable = await getLastUsedAndAvailableBrowser()
+    console.log('[Interview ManualTest] 浏览器检查结果:', puppeteerExecutable ? puppeteerExecutable.executablePath : '未找到')
 
-  process.env.PUPPETEER_EXECUTABLE_PATH = puppeteerExecutable.executablePath
+    if (!puppeteerExecutable) {
+      console.log('[Interview ManualTest] 未找到浏览器配置，尝试自动配置...')
+      try {
+        await configWithBrowserAssistant({ autoFind: true })
+        puppeteerExecutable = await getLastUsedAndAvailableBrowser()
+        console.log('[Interview ManualTest] 配置后浏览器:', puppeteerExecutable ? puppeteerExecutable.executablePath : '仍未找到')
+      } catch (e: any) {
+        console.error('[Interview ManualTest] 浏览器配置失败:', e?.message || e)
+        if (e?.message === 'USER_CANCELLED_CONFIG_BROWSER') {
+          await dialog.showMessageBox({
+            type: 'info',
+            message: '浏览器配置已取消',
+            detail: '请手动配置浏览器后再运行面试自动化。',
+            buttons: ['确定']
+          })
+          return
+        }
+      }
+    }
 
-  // 启动浏览器
-  console.log('[Interview ManualTest] 启动浏览器...')
-  const browser = await launchBrowser()
-  const page = (await browser.pages())[0]
+    if (!puppeteerExecutable) {
+      await dialog.showMessageBox({
+        type: 'error',
+        message: '未找到可用的浏览器',
+        detail: '请先配置浏览器。',
+        buttons: ['确定']
+      })
+      return
+    }
+
+    process.env.PUPPETEER_EXECUTABLE_PATH = puppeteerExecutable.executablePath
+    console.log('[Interview ManualTest] 设置 PUPPETEER_EXECUTABLE_PATH:', process.env.PUPPETEER_EXECUTABLE_PATH)
+
+    // 启动浏览器
+    console.log('[Interview ManualTest] 启动浏览器...')
+    let browser: Browser
+    let page: Page
+    try {
+      browser = await launchBrowser()
+      page = (await browser.pages())[0]
+      console.log('[Interview ManualTest] 浏览器启动成功')
+    } catch (launchErr: any) {
+      console.error('[Interview ManualTest] 浏览器启动失败:', launchErr?.message || launchErr)
+      await dialog.showMessageBox({
+        type: 'error',
+        message: '浏览器启动失败',
+        detail: `错误信息: ${launchErr?.message || '未知错误'}\n\n请检查浏览器配置是否正确。`,
+        buttons: ['确定']
+      })
+      return
+    }
 
   // 检查 cookie
-  const bossCookies = readStorageFile('boss-cookies.json')
-  const cookieValid = checkCookieListFormat(bossCookies)
+    const bossCookies = readStorageFile('boss-cookies.json')
+    const cookieValid = checkCookieListFormat(bossCookies)
+    console.log('[Interview ManualTest] Cookie 有效:', cookieValid)
 
-  // 加载页面
-  await loadBossPage(browser, page)
-  await sleep(2000)
-
-  // 检查登录状态
-  const currentUrl = page.url() ?? ''
-  if (currentUrl.startsWith('https://www.zhipin.com/web/user/')) {
-    await dialog.showMessageBox({
-      type: 'warning',
-      message: '需要登录',
-      detail: '请在浏览器中登录BOSS直聘后重试。',
-      buttons: ['确定']
-    })
-    const cp = browser.process()
-    cp?.kill('SIGKILL')
-    return
-  }
-
-  // 点击聊天菜单
-  try {
-    await page.evaluate(() => {
-      const chatMenu = document.querySelector('.menu-chat') as HTMLElement
-      if (chatMenu) chatMenu.click()
-    })
+    // 加载页面
+    console.log('[Interview ManualTest] 加载 BOSS 页面...')
+    await loadBossPage(browser, page)
     await sleep(2000)
-  } catch (e) {
-    console.log('[Interview ManualTest] 点击聊天菜单失败:', e)
-  }
 
-  // 等待页面加载
-  console.log('[Interview ManualTest] 等待页面加载...')
-  await sleep(3000)
-
-  // 主循环
-  let cursorIndex = 0
-  let processedCount = 0
-
-  while (true) {
-    try {
-      // 检查页面是否仍然有效
-      if (page.isClosed()) {
-        console.log('[Interview ManualTest] 页面已关闭，退出')
-        break
-      }
-
-      // 获取聊天列表
-      const friendListData = await page.evaluate(() => {
-        // 获取所有聊天项（只取 role="listitem" 的元素，避免重复）
-        const items = document.querySelectorAll('[role="listitem"]')
-
-        console.log('[Interview ManualTest] 找到聊天项数量:', items.length)
-
-        return [...items].map(el => {
-          // 找到 .geek-item 元素
-          const geekItemEl = el.querySelector('.geek-item') || el
-
-          // 从 DOM 文本提取信息 - cast to HTMLElement for innerText
-          const textContent = (geekItemEl as HTMLElement)?.innerText || (el as HTMLElement)?.innerText || ''
-          const textLines = textContent.split('\n').filter(line => line.trim())
-
-          // 解析文本格式
-          // 格式1（有未读数）: "1\n11:24\n刘毛印\nAI自动化开发程序员\n您好..."
-          // 格式2（无未读数）: "09:53\n张博翔\nAI自动化开发程序员\n您好..."
-          let name = ''
-          let unreadCount = 0
-          let jobName = ''
-
-          if (textLines.length >= 4) {
-            const firstLine = textLines[0]
-
-            // 判断第一行是否是未读数（纯数字）
-            if (/^\d+$/.test(firstLine) && textLines.length >= 5) {
-              // 格式1：有未读数
-              unreadCount = parseInt(firstLine) || 0
-              name = textLines[2] || ''
-              jobName = textLines[3] || ''
-            } else {
-              // 格式2：无未读数
-              name = textLines[1] || ''
-              jobName = textLines[2] || ''
-            }
-          }
-
-          // 从 key/data-id 属性获取 ID
-          const keyId = el.getAttribute('key') || geekItemEl?.getAttribute('data-id') || ''
-
-          // 尝试从 Vue 组件获取数据（与 SMART_REPLY_MAIN 相同的方式）
-          const vue = (geekItemEl as any).__vue__ || (el as any).__vue__
-          const props = vue?._props || vue?.$props || vue?.props || {}
-          // 关键：source 属性是 BOSS直聘聊天列表项的主要数据来源
-          const source = vue?.source || {}
-          const data = props.geek || props.item || props.message || props.user || props.data || props.row || source
-
-          // encryptJobId 主要在 source.encryptJobId 中
-          const encryptJobId = source.encryptJobId || data.encryptJobId || ''
-
-          return {
-            name: name || data.name || data.geekName || data.fromName || '',
-            encryptGeekId: keyId || data.encryptGeekId || data.geekId || data.securityId || source.encryptGeekId || '',
-            encryptJobId,
-            unreadCount: unreadCount || data.unreadCount || data.newMsgCount || 0,
-            jobName: jobName || data.jobName || source.jobName || '',
-            _rawData: data,
-            _source: source,
-            _hasVue: !!vue,
-            _vueSourceKeys: source ? Object.keys(source).slice(0, 20) : []
-          }
-        })
-      }) as unknown as ChatListItem[]
-
-    console.log('[Interview ManualTest] 聊天列表数量:', friendListData.length)
-    if (friendListData.length > 0) {
-      // 打印第一个聊天项的详细信息，帮助调试
-      const firstItem = friendListData[0] as any
-      console.log('[Interview ManualTest] 第一个聊天项调试信息:', {
-        name: firstItem.name,
-        encryptGeekId: firstItem.encryptGeekId,
-        encryptJobId: firstItem.encryptJobId || '(空)',
-        jobName: firstItem.jobName,
-        unreadCount: firstItem.unreadCount,
-        hasVue: firstItem._hasVue,
-        sourceKeys: firstItem._vueSourceKeys || [],
-        rawDataKeys: firstItem._rawData ? Object.keys(firstItem._rawData).slice(0, 15) : [],
-        sourcePreview: firstItem._source ? JSON.stringify(firstItem._source).substring(0, 300) : ''
+    // 检查登录状态
+    const currentUrl = page.url() ?? ''
+    console.log('[Interview ManualTest] 当前 URL:', currentUrl)
+    if (currentUrl.startsWith('https://www.zhipin.com/web/user/')) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        message: '需要登录',
+        detail: '请在浏览器中登录BOSS直聘后重试。',
+        buttons: ['确定']
       })
+      const cp = browser.process()
+      cp?.kill('SIGKILL')
+      return
     }
 
-    // 查找下一个有未读消息的项
-    const nextIndex = friendListData.findIndex((it, index) => {
-      return index >= cursorIndex && Number(it.unreadCount) > 0
-    })
+    // 点击聊天菜单
+    try {
+      await page.evaluate(() => {
+        const chatMenu = document.querySelector('.menu-chat') as HTMLElement
+        if (chatMenu) chatMenu.click()
+      })
+      await sleep(2000)
+    } catch (e) {
+      console.log('[Interview ManualTest] 点击聊天菜单失败:', e)
+    }
 
-    if (nextIndex < 0) {
-      // 当前列表没有未读消息，尝试滚动加载更多
-      console.log('[Interview ManualTest] 当前列表无未读消息，尝试滚动加载更多...')
+    // 等待页面加载
+    console.log('[Interview ManualTest] 等待页面加载...')
+    await sleep(3000)
 
-      let scrollAttempts = 0
-      let foundNew = false
+  // 主循环
+    let cursorIndex = 0
+    let processedCount = 0
 
-      while (scrollAttempts < 5 && !foundNew) {
-        const scrolled = await scrollChatList(page)
-        if (!scrolled) {
-          console.log('[Interview ManualTest] 无法继续滚动')
+    while (true) {
+      try {
+        // 检查页面是否仍然有效
+        if (page.isClosed()) {
+          console.log('[Interview ManualTest] 页面已关闭，退出')
           break
         }
 
-        await sleep(1500)
-
-        // 重新获取聊天列表
-        const newListData = await page.evaluate(() => {
+        // 获取聊天列表
+        const friendListData = await page.evaluate(() => {
+          // 获取所有聊天项（只取 role="listitem" 的元素，避免重复）
           const items = document.querySelectorAll('[role="listitem"]')
+
+          console.log('[Interview ManualTest] 找到聊天项数量:', items.length)
+
           return [...items].map(el => {
+            // 找到 .geek-item 元素
             const geekItemEl = el.querySelector('.geek-item') || el
+
+            // 从 DOM 文本提取信息 - cast to HTMLElement for innerText
             const textContent = (geekItemEl as HTMLElement)?.innerText || (el as HTMLElement)?.innerText || ''
             const textLines = textContent.split('\n').filter(line => line.trim())
+
+            // 解析文本格式
+            // 格式1（有未读数）: "1\n11:24\n刘毛印\nAI自动化开发程序员\n您好..."
+            // 格式2（无未读数）: "09:53\n张博翔\nAI自动化开发程序员\n您好..."
+            let name = ''
             let unreadCount = 0
+            let jobName = ''
+
             if (textLines.length >= 4) {
               const firstLine = textLines[0]
+
+              // 判断第一行是否是未读数（纯数字）
               if (/^\d+$/.test(firstLine) && textLines.length >= 5) {
+                // 格式1：有未读数
                 unreadCount = parseInt(firstLine) || 0
+                name = textLines[2] || ''
+                jobName = textLines[3] || ''
+              } else {
+                // 格式2：无未读数
+                name = textLines[1] || ''
+                jobName = textLines[2] || ''
               }
             }
-            return { unreadCount }
-          })
-        })
 
-        // 检查是否有未读消息
-        const hasUnread = newListData.some((it: any) => it.unreadCount > 0)
-        if (hasUnread) {
-          console.log('[Interview ManualTest] 滚动后发现未读消息')
-          foundNew = true
-          break
+            // 从 key/data-id 属性获取 ID
+            const keyId = el.getAttribute('key') || geekItemEl?.getAttribute('data-id') || ''
+
+            // 尝试从 Vue 组件获取数据（与 SMART_REPLY_MAIN 相同的方式）
+            const vue = (geekItemEl as any).__vue__ || (el as any).__vue__
+            const props = vue?._props || vue?.$props || vue?.props || {}
+            // 关键：source 属性是 BOSS直聘聊天列表项的主要数据来源
+            const source = vue?.source || {}
+            const data = props.geek || props.item || props.message || props.user || props.data || props.row || source
+
+            // encryptJobId 主要在 source.encryptJobId 中
+            const encryptJobId = source.encryptJobId || data.encryptJobId || ''
+
+            return {
+              name: name || data.name || data.geekName || data.fromName || '',
+              encryptGeekId: keyId || data.encryptGeekId || data.geekId || data.securityId || source.encryptGeekId || '',
+              encryptJobId,
+              unreadCount: unreadCount || data.unreadCount || data.newMsgCount || 0,
+              jobName: jobName || data.jobName || source.jobName || '',
+              _rawData: data,
+              _source: source,
+              _hasVue: !!vue,
+              _vueSourceKeys: source ? Object.keys(source).slice(0, 20) : []
+            }
+          })
+        }) as unknown as ChatListItem[]
+
+        console.log('[Interview ManualTest] 聊天列表数量:', friendListData.length)
+        if (friendListData.length > 0) {
+          // 打印第一个聊天项的详细信息，帮助调试
+          const firstItem = friendListData[0] as any
+          console.log('[Interview ManualTest] 第一个聊天项调试信息:', {
+            name: firstItem.name,
+            encryptGeekId: firstItem.encryptGeekId,
+            encryptJobId: firstItem.encryptJobId || '(空)',
+            jobName: firstItem.jobName,
+            unreadCount: firstItem.unreadCount,
+            hasVue: firstItem._hasVue,
+            sourceKeys: firstItem._vueSourceKeys || [],
+            rawDataKeys: firstItem._rawData ? Object.keys(firstItem._rawData).slice(0, 15) : [],
+            sourcePreview: firstItem._source ? JSON.stringify(firstItem._source).substring(0, 300) : ''
+          })
         }
 
-        scrollAttempts++
-      }
+        // 查找下一个有未读消息的项
+        const nextIndex = friendListData.findIndex((it, index) => {
+      return index >= cursorIndex && Number(it.unreadCount) > 0
+        })
 
-      if (!foundNew) {
-        // 多次滚动都没有未读消息
-        const res = await dialog.showMessageBox({
-          type: 'info',
-          message: '处理完成',
-          detail: `已处理 ${processedCount} 条未读消息。\n\n当前列表共 ${friendListData.length} 个聊天项，未发现更多未读消息。\n\n是否继续检查新消息？`,
-          buttons: ['继续检查', '退出'],
+        if (nextIndex < 0) {
+          // 当前列表没有未读消息，尝试滚动加载更多
+          console.log('[Interview ManualTest] 当前列表无未读消息，尝试滚动加载更多...')
+
+          let scrollAttempts = 0
+          let foundNew = false
+
+          while (scrollAttempts < 5 && !foundNew) {
+            const scrolled = await scrollChatList(page)
+            if (!scrolled) {
+              console.log('[Interview ManualTest] 无法继续滚动')
+              break
+            }
+
+            await sleep(1500)
+
+            // 重新获取聊天列表
+            const newListData = await page.evaluate(() => {
+              const items = document.querySelectorAll('[role="listitem"]')
+              return [...items].map(el => {
+                const geekItemEl = el.querySelector('.geek-item') || el
+                const textContent = (geekItemEl as HTMLElement)?.innerText || (el as HTMLElement)?.innerText || ''
+                const textLines = textContent.split('\n').filter(line => line.trim())
+                let unreadCount = 0
+                if (textLines.length >= 4) {
+                  const firstLine = textLines[0]
+                  if (/^\d+$/.test(firstLine) && textLines.length >= 5) {
+                    unreadCount = parseInt(firstLine) || 0
+                  }
+                }
+                return { unreadCount }
+              })
+            })
+
+            // 检查是否有未读消息
+            const hasUnread = newListData.some((it: any) => it.unreadCount > 0)
+            if (hasUnread) {
+              console.log('[Interview ManualTest] 滚动后发现未读消息')
+              foundNew = true
+              break
+            }
+
+            scrollAttempts++
+          }
+
+          if (!foundNew) {
+            // 多次滚动都没有未读消息
+            const res = await dialog.showMessageBox({
+              type: 'info',
+              message: '处理完成',
+              detail: `已处理 ${processedCount} 条未读消息。\n\n当前列表共 ${friendListData.length} 个聊天项，未发现更多未读消息。\n\n是否继续检查新消息？`,
+              buttons: ['继续检查', '退出'],
+              defaultId: 0
+            })
+
+            if (res.response === 1) {
+              break
+            }
+            cursorIndex = 0
+            await sleep(5000)
+          }
+          continue
+        }
+
+        cursorIndex = nextIndex
+        const targetChat = friendListData[nextIndex]
+
+        console.log('[Interview ManualTest] 处理聊天:', targetChat.name, '未读:', targetChat.unreadCount)
+
+        // 点击聊天项
+        await page.evaluate((index) => {
+          const items = document.querySelectorAll('[role="listitem"]')
+          const geekItem = items[index]?.querySelector('.geek-item')
+          if (geekItem) {
+            (geekItem as HTMLElement).click()
+          } else if (items[index]) {
+            (items[index] as HTMLElement).click()
+          }
+        }, nextIndex)
+
+        // 等待聊天数据加载
+        console.log('[Interview ManualTest] 等待聊天数据加载...')
+        await sleep(2000)
+
+        // 打印聊天区域的完整结构，帮助调试
+        const chatAreaDebug = await page.evaluate(() => {
+          const chatConversation = document.querySelector('.chat-conversation')
+          if (!chatConversation) {
+            return { found: false }
+          }
+
+          // 查找所有可能的输入框和发送按钮
+          const allInputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')
+          const allButtons = document.querySelectorAll('button, [class*="btn"], [class*="send"]')
+
+          // 查找 message-controls 的各种可能选择器
+          const possibleContainers = [
+            '.message-controls',
+            '.chat-controls',
+            '.input-area',
+            '.reply-box',
+            '.chat-input-box',
+            '[class*="control"]',
+            '[class*="input"]'
+          ]
+
+          const foundContainers = possibleContainers.map(selector => ({
+            selector,
+            count: document.querySelectorAll(selector).length
+          })).filter(item => item.count > 0)
+
+          return {
+            found: true,
+            conversationHTMLLength: chatConversation.innerHTML.length,
+            inputCount: allInputs.length,
+            inputClasses: [...allInputs].slice(0, 3).map(el => el.className),
+            buttonCount: allButtons.length,
+            buttonClasses: [...allButtons].slice(0, 5).map(el => el.className),
+            foundContainers
+          }
+        })
+        console.log('[Interview ManualTest] 聊天区域结构:', JSON.stringify(chatAreaDebug, null, 2))
+
+        // 等待聊天区域加载完成
+        let waitCount = 0
+        while (waitCount < 10) {
+          const dataLoaded = await page.evaluate(() => {
+            const noData = document.querySelector('.conversation-no-data')
+            const chatConversation = document.querySelector('.chat-conversation')
+            // 使用正确的输入框选择器
+            const chatInput = document.querySelector('.boss-chat-editor-input') ||
+                             document.querySelector('.chat-conversation .message-controls .chat-input')
+
+            return {
+              hasNoData: !!noData,
+              hasChatInput: !!chatInput,
+              conversationHTMLLength: chatConversation?.innerHTML?.length || 0
+            }
+          })
+
+          console.log('[Interview ManualTest] 数据加载状态:', JSON.stringify(dataLoaded))
+
+          if (dataLoaded.hasChatInput) {
+            console.log('[Interview ManualTest] 聊天区域已加载')
+            break
+          }
+
+          if (dataLoaded.hasNoData) {
+            console.log('[Interview ManualTest] 无聊天数据')
+            break
+          }
+
+          waitCount++
+          await sleep(1000)
+        }
+
+        if (waitCount >= 10) {
+          console.log('[Interview ManualTest] 等待超时，跳过')
+          cursorIndex += 1
+          continue
+        }
+
+        // 获取候选人详细信息 - 优先使用从聊天列表获取的数据
+        const geekInfo = await getFullGeekInfo(page)
+        // 优先使用从聊天列表获取的信息（targetChat），而不是右侧聊天区域（geekInfo）
+        // 因为右侧聊天区域可能还没刷新完成
+        const encryptGeekId = (targetChat as any).encryptGeekId || geekInfo?.encryptGeekId || ''
+        const geekName = targetChat.name || geekInfo?.name || ''
+        const encryptJobId = (targetChat as any).encryptJobId || geekInfo?.encryptJobId || ''
+        const jobName = (targetChat as any).jobName || geekInfo?.jobName || ''
+
+        console.log('[Interview ManualTest] 候选人信息:', {
+          geekName,
+          jobName,
+          encryptGeekId: encryptGeekId ? '已获取' : '空',
+          encryptJobId: encryptJobId ? '已获取(' + encryptJobId.substring(0, 10) + '...)' : '空',
+          targetChatEncryptJobId: (targetChat as any).encryptJobId ? '有' : '无',
+          geekInfoEncryptJobId: geekInfo?.encryptJobId ? '有' : '无',
+          targetChatName: targetChat.name,
+          geekInfoName: geekInfo?.name || '无'
+        })
+
+        if (!encryptGeekId) {
+          console.log('[Interview ManualTest] 无法获取候选人ID，跳过')
+          cursorIndex += 1
+          continue
+        }
+
+        // 匹配岗位配置
+        const matchedPosition = matchJobPosition(jobName, jobPositions)
+
+        if (!matchedPosition) {
+          console.log('[Interview ManualTest] 未匹配到岗位配置:', jobName)
+          const res = await dialog.showMessageBox({
+            type: 'warning',
+            message: `未匹配到岗位配置`,
+            detail: `候选人：${geekName}\n应聘岗位：${jobName}\n\n无法确定要发送的问题，是否跳过？`,
+        buttons: ['跳过', '退出'],
           defaultId: 0
         })
 
-        if (res.response === 1) {
-          break
-        }
-        cursorIndex = 0
-        await sleep(5000)
-      }
-      continue
-    }
-
-    cursorIndex = nextIndex
-    const targetChat = friendListData[nextIndex]
-
-    console.log('[Interview ManualTest] 处理聊天:', targetChat.name, '未读:', targetChat.unreadCount)
-
-    // 点击聊天项
-    await page.evaluate((index) => {
-      const items = document.querySelectorAll('[role="listitem"]')
-      const geekItem = items[index]?.querySelector('.geek-item')
-      if (geekItem) {
-        (geekItem as HTMLElement).click()
-      } else if (items[index]) {
-        (items[index] as HTMLElement).click()
-      }
-    }, nextIndex)
-
-    // 等待聊天数据加载
-    console.log('[Interview ManualTest] 等待聊天数据加载...')
-    await sleep(2000)
-
-    // 打印聊天区域的完整结构，帮助调试
-    const chatAreaDebug = await page.evaluate(() => {
-      const chatConversation = document.querySelector('.chat-conversation')
-      if (!chatConversation) {
-        return { found: false }
+        if (res.response === 1) break
+        cursorIndex += 1
+        continue
       }
 
-      // 查找所有可能的输入框和发送按钮
-      const allInputs = document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')
-      const allButtons = document.querySelectorAll('button, [class*="btn"], [class*="send"]')
-
-      // 查找 message-controls 的各种可能选择器
-      const possibleContainers = [
-        '.message-controls',
-        '.chat-controls',
-        '.input-area',
-        '.reply-box',
-        '.chat-input-box',
-        '[class*="control"]',
-        '[class*="input"]'
-      ]
-
-      const foundContainers = possibleContainers.map(selector => ({
-        selector,
-        count: document.querySelectorAll(selector).length
-      })).filter(item => item.count > 0)
-
-      return {
-        found: true,
-        conversationHTMLLength: chatConversation.innerHTML.length,
-        inputCount: allInputs.length,
-        inputClasses: [...allInputs].slice(0, 3).map(el => el.className),
-        buttonCount: allButtons.length,
-        buttonClasses: [...allButtons].slice(0, 5).map(el => el.className),
-        foundContainers
-      }
-    })
-    console.log('[Interview ManualTest] 聊天区域结构:', JSON.stringify(chatAreaDebug, null, 2))
-
-    // 等待聊天区域加载完成
-    let waitCount = 0
-    while (waitCount < 10) {
-      const dataLoaded = await page.evaluate(() => {
-        const noData = document.querySelector('.conversation-no-data')
-        const chatConversation = document.querySelector('.chat-conversation')
-        // 使用正确的输入框选择器
-        const chatInput = document.querySelector('.boss-chat-editor-input') ||
-                         document.querySelector('.chat-conversation .message-controls .chat-input')
-
-        return {
-          hasNoData: !!noData,
-          hasChatInput: !!chatInput,
-          conversationHTMLLength: chatConversation?.innerHTML?.length || 0
-        }
-      })
-
-      console.log('[Interview ManualTest] 数据加载状态:', JSON.stringify(dataLoaded))
-
-      if (dataLoaded.hasChatInput) {
-        console.log('[Interview ManualTest] 聊天区域已加载')
-        break
+      // 获取候选人状态（仅当有 encryptJobId 时才能查询）
+      let candidate: Candidate | null = null
+      if (encryptJobId) {
+        candidate = await getCandidate(dataSource!, encryptGeekId, encryptJobId)
       }
 
-      if (dataLoaded.hasNoData) {
-        console.log('[Interview ManualTest] 无聊天数据')
-        break
-      }
+      // 处理不同状态的候选人
+      const candidateStatus = candidate?.status || 'new'
 
-      waitCount++
-      await sleep(1000)
-    }
+      // === 分支1: 处理等待回复的候选人（评分流程） ===
+      if (candidateStatus.startsWith('waiting_round_')) {
+        console.log('[Interview ManualTest] 候选人状态:', candidateStatus, '检查是否有新回复...')
 
-    if (waitCount >= 10) {
-      console.log('[Interview ManualTest] 等待超时，跳过')
-      cursorIndex += 1
-      continue
-    }
-
-    // 获取候选人详细信息 - 优先使用从聊天列表获取的数据
-    const geekInfo = await getFullGeekInfo(page)
-    // 优先使用从聊天列表获取的信息（targetChat），而不是右侧聊天区域（geekInfo）
-    // 因为右侧聊天区域可能还没刷新完成
-    const encryptGeekId = (targetChat as any).encryptGeekId || geekInfo?.encryptGeekId || ''
-    const geekName = targetChat.name || geekInfo?.name || ''
-    const encryptJobId = (targetChat as any).encryptJobId || geekInfo?.encryptJobId || ''
-    const jobName = (targetChat as any).jobName || geekInfo?.jobName || ''
-
-    console.log('[Interview ManualTest] 候选人信息:', {
-      geekName,
-      jobName,
-      encryptGeekId: encryptGeekId ? '已获取' : '空',
-      encryptJobId: encryptJobId ? '已获取(' + encryptJobId.substring(0, 10) + '...)' : '空',
-      targetChatEncryptJobId: (targetChat as any).encryptJobId ? '有' : '无',
-      geekInfoEncryptJobId: geekInfo?.encryptJobId ? '有' : '无',
-      targetChatName: targetChat.name,
-      geekInfoName: geekInfo?.name || '无'
-    })
-
-    if (!encryptGeekId) {
-      console.log('[Interview ManualTest] 无法获取候选人ID，跳过')
-      cursorIndex += 1
-      continue
-    }
-
-    // 匹配岗位配置
-    const matchedPosition = matchJobPosition(jobName, jobPositions)
-
-    if (!matchedPosition) {
-      console.log('[Interview ManualTest] 未匹配到岗位配置:', jobName)
-      const res = await dialog.showMessageBox({
-        type: 'warning',
-        message: `未匹配到岗位配置`,
-        detail: `候选人：${geekName}\n应聘岗位：${jobName}\n\n无法确定要发送的问题，是否跳过？`,
-        buttons: ['跳过', '退出'],
-        defaultId: 0
-      })
-
-      if (res.response === 1) break
-      cursorIndex += 1
-      continue
-    }
-
-    // 获取候选人状态（仅当有 encryptJobId 时才能查询）
-    let candidate: Candidate | null = null
-    if (encryptJobId) {
-      candidate = await getCandidate(dataSource!, encryptGeekId, encryptJobId)
-    }
-
-    // 获取要发送的问题
-    const questionData = getQuestionToSend(candidate, matchedPosition)
-
-    if (!questionData) {
-      console.log('[Interview ManualTest] 该候选人已完成所有轮次')
-      const res = await dialog.showMessageBox({
-        type: 'info',
-        message: `候选人已完成所有面试轮次`,
-        detail: `候选人：${geekName}\n当前状态：第 ${(candidate?.currentRound || 0)} 轮\n\n是否跳过？`,
-        buttons: ['跳过', '退出'],
-        defaultId: 0
-      })
-
-      if (res.response === 1) break
-      cursorIndex += 1
-      continue
-    }
-
-    // 弹窗确认
-    const res = await dialog.showMessageBox({
-      type: 'question',
-      message: `确认发送第 ${questionData.roundNumber} 轮问题`,
-      detail: `候选人：${geekName}\n应聘岗位：${jobName}\n匹配配置：${matchedPosition.name}\n当前轮次：第 ${(candidate?.currentRound || 0) + 1} 轮\n\n问题内容：\n${questionData.questionText}`,
-      buttons: ['发送', '跳过', '退出'],
-      defaultId: 0
-    })
-
-    if (res.response === 2) {
-      // 退出
-      break
-    }
-    if (res.response === 1) {
-      // 跳过
-      console.log('[Interview ManualTest] 用户选择跳过')
-      cursorIndex += 1
-      continue
-    }
-
-    // 发送问题
-    console.log('[Interview ManualTest] 开始发送问题:', questionData.questionText.substring(0, 50))
-    const sendSuccess = await sendChatMessage(page, questionData.questionText)
-    console.log('[Interview ManualTest] 发送结果:', sendSuccess ? '成功' : '失败')
-
-    if (!sendSuccess) {
-      console.log('[Interview ManualTest] 发送失败，跳过')
-      cursorIndex += 1
-      continue
-    }
-
-    // 保存/更新候选人（仅当有 encryptJobId 时）
-    if (encryptJobId) {
-      try {
-        if (!candidate) {
-          candidate = await saveCandidate(dataSource!, {
-            encryptGeekId,
-            geekName,
-            encryptJobId,
-            jobName,
-            jobPositionId: matchedPosition.id
-          })
+        // 1. 检查最新消息是否来自候选人
+        const isFromCandidate = await isLatestMessageFromCandidate(page)
+        if (!isFromCandidate) {
+          console.log('[Interview ManualTest] 最新消息不是候选人发送的，跳过')
+          cursorIndex += 1
+          continue
         }
 
-        // 保存问答记录
-        await saveQaRecord(dataSource!, {
-          candidateId: candidate.id,
-          roundNumber: questionData.roundNumber,
-          questionText: questionData.questionText
+        // 2. 合并30秒窗口内的消息
+        const { mergedText, messages } = await mergeMessagesInWindow(page, candidate!, 30)
+        if (!mergedText) {
+          console.log('[Interview ManualTest] 未找到候选人回复内容，跳过')
+          cursorIndex += 1
+          continue
+        }
+
+        console.log('[Interview ManualTest] 合并回复内容:', mergedText.substring(0, 100))
+
+        // 3. 获取问题轮次配置
+        const currentRound = candidate!.currentRound
+        const questionRound = getQuestionRound(matchedPosition, currentRound)
+
+        if (!questionRound) {
+          console.log('[Interview ManualTest] 未找到当前轮次配置，跳过')
+          cursorIndex += 1
+          continue
+        }
+
+        // 4. 弹窗确认评分
+        const scoreConfirmRes = await dialog.showMessageBox({
+          type: 'question',
+          message: `确认对第 ${currentRound} 轮回复进行评分`,
+          detail: `候选人：${geekName}\n应聘岗位：${jobName}\n当前轮次：第 ${currentRound} 轮\n\n回复内容：\n${mergedText.substring(0, 200)}${mergedText.length > 200 ? '...' : ''}\n\n关键词配置：${questionRound.keywords || '无'}\n\n点击「评分」开始自动评分。`,
+          buttons: ['评分', '跳过', '退出'],
+          defaultId: 0
         })
 
-        // 更新候选人状态
-        await updateCandidateStatus(dataSource!, candidate.id, questionData.roundNumber)
-      } catch (dbErr) {
-        console.error('[Interview ManualTest] 保存数据库失败:', dbErr)
+        if (scoreConfirmRes.response === 2) {
+          break
+        }
+        if (scoreConfirmRes.response === 1) {
+          cursorIndex += 1
+          continue
+        }
+
+        // 5. 执行评分
+        console.log('[Interview ManualTest] 开始评分...')
+        const scoreResult: ScoreResult = await scoreAnswer(
+          dataSource!,
+          candidate!,
+          questionRound.questionText,
+          mergedText,
+          questionRound as any,
+          matchedPosition.passThreshold
+        )
+
+        console.log('[Interview ManualTest] 评分结果:', JSON.stringify(scoreResult))
+
+        // 6. 保存问答记录（含评分）
+        if (encryptJobId && candidate) {
+          try {
+            const qaRepo = dataSource!.getRepository('InterviewQaRecord')
+            // 查找当前轮次的问答记录
+            const existingRecord = await qaRepo.findOne({
+              where: { candidateId: candidate.id, roundNumber: currentRound }
+            })
+
+            if (existingRecord) {
+              // 更新现有记录
+              await qaRepo.update(existingRecord.id!, {
+                answerText: mergedText,
+                answeredAt: new Date(),
+                keywordScore: scoreResult.keywordScore,
+                llmScore: scoreResult.llmScore,
+                totalScore: scoreResult.totalScore,
+                llmReason: scoreResult.llmReason,
+                matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
+                scoredAt: new Date()
+              })
+            } else {
+              // 创建新记录
+              await qaRepo.save(qaRepo.create({
+                candidateId: candidate.id,
+                roundNumber: currentRound,
+                questionText: questionRound.questionText,
+                answerText: mergedText,
+                answeredAt: new Date(),
+                questionSentAt: candidate.lastQuestionAt,
+                keywordScore: scoreResult.keywordScore,
+                llmScore: scoreResult.llmScore,
+                totalScore: scoreResult.totalScore,
+                llmReason: scoreResult.llmReason,
+                matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
+                scoredAt: new Date()
+              }))
+            }
+
+            // 更新候选人得分
+            const candRepo = dataSource!.getRepository('InterviewCandidate')
+            await candRepo.update(candidate.id!, {
+              totalScore: scoreResult.totalScore,
+              keywordScore: scoreResult.keywordScore,
+              llmScore: scoreResult.llmScore,
+              llmReason: scoreResult.llmReason,
+              lastReplyAt: new Date()
+            })
+
+            console.log('[Interview ManualTest] 评分记录已保存')
+          } catch (dbErr) {
+            console.error('[Interview ManualTest] 保存评分记录失败:', dbErr)
+          }
+        }
+
+        // 7. 判断是否通过
+        if (scoreResult.passed) {
+          console.log('[Interview ManualTest] 评分通过！')
+
+          // 检查是否有下一轮
+          const nextRoundNumber = currentRound + 1
+          const nextRound = getQuestionRound(matchedPosition, nextRoundNumber)
+
+          if (nextRound) {
+            // 发送下一轮问题
+            const nextRoundRes = await dialog.showMessageBox({
+              type: 'question',
+              message: `评分通过，发送第 ${nextRoundNumber} 轮问题`,
+              detail: `候选人：${geekName}\n第 ${currentRound} 轮评分：${scoreResult.totalScore}分（通过）\n\n下一轮问题：\n${nextRound.questionText}`,
+              buttons: ['发送', '跳过', '退出'],
+              defaultId: 0
+            })
+
+            if (nextRoundRes.response === 0) {
+              const sendSuccess = await sendChatMessage(page, nextRound.questionText)
+              if (sendSuccess && encryptJobId && candidate) {
+                // 保存下一轮问答记录
+                await saveQaRecord(dataSource!, {
+                  candidateId: candidate.id,
+                  roundNumber: nextRoundNumber,
+                  questionText: nextRound.questionText
+                })
+                // 更新候选人状态
+                const candRepo = dataSource!.getRepository('InterviewCandidate')
+                await candRepo.update(candidate.id!, {
+                  status: `waiting_round_${nextRoundNumber}`,
+                  currentRound: nextRoundNumber,
+                  lastQuestionAt: new Date()
+                })
+                console.log('[Interview ManualTest] 已发送第', nextRoundNumber, '轮问题')
+              }
+            }
+          } else {
+            // 全部通过，发送简历邀约
+            console.log('[Interview ManualTest] 所有轮次通过！')
+
+            const inviteRes = await dialog.showMessageBox({
+              type: 'question',
+              message: `所有轮次通过，发送简历邀约`,
+              detail: `候选人：${geekName}\n已完成所有 ${matchedPosition.questionRounds.length} 轮面试\n总评分：${scoreResult.totalScore}分\n\n简历邀约话术：\n${matchedPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'}`,
+              buttons: ['发送', '跳过', '退出'],
+              defaultId: 0
+            })
+
+            if (inviteRes.response === 0) {
+              const inviteText = matchedPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+              const sendSuccess = await sendResumeInvite(page, inviteText)
+
+              if (sendSuccess && encryptJobId && candidate) {
+                const candRepo = dataSource!.getRepository('InterviewCandidate')
+                await candRepo.update(candidate.id!, {
+                  status: 'resume_requested'
+                })
+                console.log('[Interview ManualTest] 已发送简历邀约，状态更新为 resume_requested')
+              }
+            }
+          }
+        } else {
+          // 未通过，标记为拒绝
+          console.log('[Interview ManualTest] 评分未通过')
+
+        const rejectRes = await dialog.showMessageBox({
+          type: 'warning',
+          message: `评分未通过`,
+          detail: `候选人：${geekName}\n第 ${currentRound} 轮评分：${scoreResult.totalScore}分（未达到 ${matchedPosition.passThreshold} 分阈值）\n\n将标记为「已拒绝」状态。`,
+          buttons: ['确认拒绝', '跳过', '退出'],
+          defaultId: 0
+        })
+
+        if (rejectRes.response === 0 && encryptJobId && candidate) {
+          const candRepo = dataSource!.getRepository('InterviewCandidate')
+          await candRepo.update(candidate.id!, {
+            status: 'rejected'
+          })
+          console.log('[Interview ManualTest] 候选人已标记为 rejected')
+        }
       }
-    } else {
-      console.log('[Interview ManualTest] 未获取到 encryptJobId，跳过数据库保存')
-    }
 
-    processedCount++
-    cursorIndex += 1
-
-    // 短暂延迟
-    await sleep(1000)
-    } catch (loopErr: any) {
-      console.error('[Interview ManualTest] 循环错误:', loopErr?.message || loopErr)
-
-      // 检查是否是页面关闭导致的错误
-      if (loopErr?.message?.includes('detached') || loopErr?.message?.includes('closed')) {
-        console.log('[Interview ManualTest] 页面已分离或关闭，退出循环')
-        break
-      }
-
-      // 继续下一个
+      processedCount++
       cursorIndex += 1
-      await sleep(2000)
+      await sleep(1000)
+      continue
+    }
+
+    // === 分支2: 处理新候选人（发送问题流程） ===
+        // 获取要发送的问题
+        const questionData = getQuestionToSend(candidate, matchedPosition)
+
+        if (!questionData) {
+          console.log('[Interview ManualTest] 该候选人已完成所有轮次')
+          const res = await dialog.showMessageBox({
+            type: 'info',
+            message: `候选人已完成所有面试轮次`,
+            detail: `候选人：${geekName}\n当前状态：第 ${(candidate?.currentRound || 0)} 轮\n\n是否跳过？`,
+            buttons: ['跳过', '退出'],
+            defaultId: 0
+          })
+
+          if (res.response === 1) break
+          cursorIndex += 1
+          continue
+        }
+
+        // 弹窗确认
+        const res = await dialog.showMessageBox({
+          type: 'question',
+          message: `确认发送第 ${questionData.roundNumber} 轮问题`,
+          detail: `候选人：${geekName}\n应聘岗位：${jobName}\n匹配配置：${matchedPosition.name}\n当前轮次：第 ${(candidate?.currentRound || 0) + 1} 轮\n\n问题内容：\n${questionData.questionText}`,
+          buttons: ['发送', '跳过', '退出'],
+          defaultId: 0
+        })
+
+        if (res.response === 2) {
+          // 退出
+          break
+        }
+        if (res.response === 1) {
+          // 跳过
+          console.log('[Interview ManualTest] 用户选择跳过')
+          cursorIndex += 1
+          continue
+        }
+
+        // 发送问题
+        console.log('[Interview ManualTest] 开始发送问题:', questionData.questionText.substring(0, 50))
+        const sendSuccess = await sendChatMessage(page, questionData.questionText)
+        console.log('[Interview ManualTest] 发送结果:', sendSuccess ? '成功' : '失败')
+
+        if (!sendSuccess) {
+          console.log('[Interview ManualTest] 发送失败，跳过')
+          cursorIndex += 1
+          continue
+        }
+
+        // 保存/更新候选人（仅当有 encryptJobId 时）
+        if (encryptJobId) {
+          try {
+            if (!candidate) {
+              candidate = await saveCandidate(dataSource!, {
+                encryptGeekId,
+                geekName,
+                encryptJobId,
+                jobName,
+                jobPositionId: matchedPosition.id
+              })
+            }
+
+            // 保存问答记录
+            await saveQaRecord(dataSource!, {
+              candidateId: candidate.id,
+              roundNumber: questionData.roundNumber,
+              questionText: questionData.questionText
+            })
+
+            // 更新候选人状态
+            await updateCandidateStatus(dataSource!, candidate.id, questionData.roundNumber)
+          } catch (dbErr) {
+            console.error('[Interview ManualTest] 保存数据库失败:', dbErr)
+          }
+        } else {
+          console.log('[Interview ManualTest] 未获取到 encryptJobId，跳过数据库保存')
+        }
+
+        processedCount++
+        cursorIndex += 1
+
+        // 短暂延迟
+        await sleep(1000)
+      } catch (loopErr: any) {
+        console.error('[Interview ManualTest] 循环错误:', loopErr?.message || loopErr)
+
+        // 检查是否是页面关闭导致的错误
+        if (loopErr?.message?.includes('detached') || loopErr?.message?.includes('closed')) {
+          console.log('[Interview ManualTest] 页面已分离或关闭，退出循环')
+          break
+        }
+
+        // 继续下一个
+        cursorIndex += 1
+        await sleep(2000)
+      }
+    }
+
+    // 关闭浏览器
+    try {
+      const cp = browser.process()
+      cp?.kill('SIGKILL')
+    } catch {
+      //
+    }
+
+    console.log('[Interview ManualTest] 结束')
+  } catch (topLevelErr: any) {
+    console.error('[Interview ManualTest] 顶层错误:', topLevelErr?.message || topLevelErr)
+    try {
+      await dialog.showMessageBox({
+        type: 'error',
+        message: '面试自动化执行出错',
+        detail: `错误信息: ${topLevelErr?.message || '未知错误'}\n\n请查看控制台日志获取详细信息。`,
+        buttons: ['确定']
+      })
+    } catch {
+      // dialog 可能也不可用
     }
   }
-
-  // 关闭浏览器
-  try {
-    const cp = browser.process()
-    cp?.kill('SIGKILL')
-  } catch {
-    //
-  }
-
-  console.log('[Interview ManualTest] 结束')
 }
