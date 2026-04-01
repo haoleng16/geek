@@ -712,12 +712,12 @@ export async function runManualTest() {
       const dataLoaded = await page.evaluate(() => {
         const noData = document.querySelector('.conversation-no-data')
         const chatConversation = document.querySelector('.chat-conversation')
-        const messageControls = document.querySelector('.chat-conversation .message-controls')
-        const chatInput = document.querySelector('.chat-conversation .message-controls .chat-input')
+        // 使用正确的输入框选择器
+        const chatInput = document.querySelector('.boss-chat-editor-input') ||
+                         document.querySelector('.chat-conversation .message-controls .chat-input')
 
         return {
           hasNoData: !!noData,
-          hasMessageControls: !!messageControls,
           hasChatInput: !!chatInput,
           conversationHTMLLength: chatConversation?.innerHTML?.length || 0
         }
@@ -725,7 +725,7 @@ export async function runManualTest() {
 
       console.log('[Interview ManualTest] 数据加载状态:', JSON.stringify(dataLoaded))
 
-      if (dataLoaded.hasMessageControls && dataLoaded.hasChatInput) {
+      if (dataLoaded.hasChatInput) {
         console.log('[Interview ManualTest] 聊天区域已加载')
         break
       }
@@ -832,31 +832,6 @@ export async function runManualTest() {
 
     // 发送问题
     console.log('[Interview ManualTest] 开始发送问题:', questionData.questionText.substring(0, 50))
-
-    // 先检查页面元素
-    const pageDebug = await page.evaluate(() => {
-      const chatConversation = document.querySelector('.chat-conversation')
-      const messageControls = document.querySelector('.chat-conversation .message-controls')
-      const chatInput = document.querySelector('.chat-conversation .message-controls .chat-input')
-      const sendBtn = document.querySelector('.chat-conversation .message-controls .chat-op .btn-send')
-
-      return {
-        hasChatConversation: !!chatConversation,
-        hasMessageControls: !!messageControls,
-        hasChatInput: !!chatInput,
-        hasSendBtn: !!sendBtn,
-        sendBtnDisabled: sendBtn?.classList.contains('disabled'),
-        chatInputValue: (chatInput as HTMLTextAreaElement)?.value || '',
-        chatInputPlaceholder: (chatInput as HTMLTextAreaElement)?.placeholder || ''
-      }
-    })
-    console.log('[Interview ManualTest] 页面元素调试:', JSON.stringify(pageDebug, null, 2))
-
-    if (!pageDebug.hasChatInput) {
-      console.log('[Interview ManualTest] 输入框不存在，等待...')
-      await sleep(3000)
-    }
-
     const sendSuccess = await sendChatMessage(page, questionData.questionText)
     console.log('[Interview ManualTest] 发送结果:', sendSuccess ? '成功' : '失败')
 
