@@ -54,6 +54,25 @@ const DEFAULT_SCORING_PROMPT = `你是一个专业的招聘助手，请根据候
 只返回JSON，不要其他内容。`
 
 /**
+ * 清理消息文本，移除表情符号描述和特殊字符
+ * BOSS直聘的表情可能使用 [xxx] 格式描述，如 [微笑]、[有道理] 等
+ */
+function cleanMessageText(text: string): string {
+  if (!text) return ''
+
+  // 移除方括号表情描述，如 [微笑]、[有道理]、[点赞] 等
+  let cleaned = text.replace(/\[[^\]]*\]/g, '')
+
+  // 移除 Unicode 表情符号
+  cleaned = cleaned.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+
+  // 移除多余空格
+  cleaned = cleaned.replace(/\s+/g, ' ').trim()
+
+  return cleaned
+}
+
+/**
  * 计算关键词得分
  * 新逻辑：包含任意关键词即满分（100分）
  * keywordsJson 格式支持两种：
@@ -74,7 +93,14 @@ export function calculateKeywordScore(
       return { score: 0, matchedKeywords: [] }
     }
 
-    const answerLower = answer.toLowerCase()
+    // 清理消息文本，移除表情符号描述
+    const cleanedAnswer = cleanMessageText(answer)
+    if (!cleanedAnswer) {
+      console.log('[Scorer] 清理后的消息为空，跳过关键词匹配')
+      return { score: 0, matchedKeywords: [] }
+    }
+
+    const answerLower = cleanedAnswer.toLowerCase()
     const matchedKeywords: string[] = []
 
     // 支持两种格式
@@ -97,6 +123,8 @@ export function calculateKeywordScore(
     // 包含任意关键词即满分（100分）
     const score = matchedKeywords.length > 0 ? 100 : 0
 
+    console.log(`[Scorer] 原始消息: "${answer.substring(0, 50)}..."`)
+    console.log(`[Scorer] 清理后消息: "${cleanedAnswer.substring(0, 50)}..."`)
     console.log(`[Scorer] 关键词匹配结果: 匹配了 ${matchedKeywords.length} 个关键词: ${matchedKeywords.join(', ')}`)
 
     return { score, matchedKeywords }

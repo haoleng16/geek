@@ -304,6 +304,88 @@ function getQuestionRound(position: JobPosition, roundNumber: number): QuestionR
   return position.questionRounds.find(r => r.roundNumber === roundNumber)
 }
 
+// 点击"求简历"按钮发送简历交换请求
+async function clickResumeExchangeBtn(page: Page): Promise<boolean> {
+  try {
+    console.log('[Interview ManualTest] 尝试点击"求简历"按钮...')
+
+    // 查找"求简历"按钮（BOSS直聘聊天框中的按钮）
+    const resumeBtnSelectors = [
+      '.chat-conversation .message-controls .btn-resume',
+      '.chat-conversation .message-controls .resume-btn',
+      '.chat-conversation .message-controls [class*="resume"]',
+      '.chat-conversation .message-controls [class*="request-resume"]',
+      '.boss-chat-editor-wrap .btn-resume',
+      '.boss-chat-editor-wrap .resume-btn',
+      '.boss-chat-editor-wrap [class*="resume"]',
+      '.message-controls .btn-request-resume',
+      '.message-controls .btn-ask-resume',
+      '.chat-editor-box .btn-resume',
+      '.chat-editor-box [class*="resume"]',
+      '[class*="ask-resume"]',
+      '[class*="request-resume"]'
+    ]
+
+    let resumeBtn = null
+    for (const selector of resumeBtnSelectors) {
+      resumeBtn = await page.$(selector)
+      if (resumeBtn) {
+        console.log(`[Interview ManualTest] 找到求简历按钮: ${selector}`)
+        break
+      }
+    }
+
+    if (!resumeBtn) {
+      console.log('[Interview ManualTest] 未找到"求简历"按钮，尝试从DOM查找')
+      // 尝试从DOM中查找包含"简历"文字的按钮
+      const btnHandle = await page.evaluateHandle(() => {
+        const buttons = document.querySelectorAll('.chat-conversation button, .message-controls button, .boss-chat-editor-wrap button')
+        for (const btn of buttons) {
+          if (btn.textContent?.includes('简历') || btn.textContent?.includes('求简历')) {
+            return btn
+          }
+        }
+        return null
+      })
+      resumeBtn = btnHandle.asElement()
+    }
+
+    if (!resumeBtn) {
+      console.log('[Interview ManualTest] 仍未找到"求简历"按钮')
+      return false
+    }
+
+    // 点击"求简历"按钮
+    await resumeBtn.click()
+    console.log('[Interview ManualTest] 已点击"求简历"按钮')
+    await sleep(1000)
+
+    // 可能会出现确认弹窗，需要点击确认
+    const confirmBtnSelectors = [
+      '.dialog-box .btn-confirm',
+      '.dialog-box .confirm-btn',
+      '.modal-box .btn-confirm',
+      '[class*="dialog"] .btn-confirm',
+      '[class*="modal"] .btn-confirm'
+    ]
+
+    for (const selector of confirmBtnSelectors) {
+      const confirmBtn = await page.$(selector)
+      if (confirmBtn) {
+        console.log(`[Interview ManualTest] 找到确认按钮: ${selector}`)
+        await confirmBtn.click()
+        await sleep(500)
+        break
+      }
+    }
+
+    return true
+  } catch (error) {
+    console.error('[Interview ManualTest] 点击"求简历"按钮失败:', error)
+    return false
+  }
+}
+
 // 发送简历邀约话术
 async function sendResumeInvite(page: Page, inviteText: string): Promise<boolean> {
   if (!inviteText) {
@@ -928,7 +1010,7 @@ export async function runManualTest() {
         }
 
         // 2. 合并30秒窗口内的消息
-        const { mergedText, messages } = await mergeMessagesInWindow(page, candidate!, 30)
+        const { mergedText, messages, latestMessageTime } = await mergeMessagesInWindow(page, candidate!, 30)
         if (!mergedText) {
           console.log('[Interview ManualTest] 未找到候选人回复内容，跳过')
           cursorIndex += 1
@@ -1016,17 +1098,18 @@ export async function runManualTest() {
               }))
             }
 
-            // 更新候选人得分
+            // 更新候选人得分和已评分时间
             const candRepo = dataSource!.getRepository('InterviewCandidate')
             await candRepo.update(candidate.id!, {
               totalScore: scoreResult.totalScore,
               keywordScore: scoreResult.keywordScore,
               llmScore: scoreResult.llmScore,
               llmReason: scoreResult.llmReason,
-              lastReplyAt: new Date()
+              lastReplyAt: new Date(),
+              lastScoredAt: latestMessageTime || new Date()  // 记录已评分的消息时间，避免重复评分
             })
 
-            console.log('[Interview ManualTest] 评分记录已保存')
+            console.log('[Interview ManualTest] 评分记录已保存，已评分时间:', latestMessageTime?.toISOString())
           } catch (dbErr) {
             console.error('[Interview ManualTest] 保存评分记录失败:', dbErr)
           }
@@ -1082,8 +1165,15 @@ export async function runManualTest() {
             })
 
             if (inviteRes.response === 0) {
-              const inviteText = matchedPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
-              const sendSuccess = await sendResumeInvite(page, inviteText)
+              // 优先尝试点击"求简历"按钮
+              let sendSuccess = await clickResumeExchangeBtn(page)
+
+              if (!sendSuccess) {
+                // 如果点击按钮失败，回退到发送文本消息
+                console.log('[Interview ManualTest] 点击"求简历"按钮失败，回退到发送文本消息')
+                const inviteText = matchedPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+                sendSuccess = await sendResumeInvite(page, inviteText)
+              }
 
               if (sendSuccess && encryptJobId && candidate) {
                 const candRepo = dataSource!.getRepository('InterviewCandidate')
@@ -1115,6 +1205,7 @@ export async function runManualTest() {
         }
       }
 
+      // 分支1处理完毕，跳到下一个候选人
       processedCount++
       cursorIndex += 1
       await sleep(1000)

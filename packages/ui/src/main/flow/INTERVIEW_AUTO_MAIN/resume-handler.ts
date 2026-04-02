@@ -34,6 +34,117 @@ function getResumeDirectory(): string {
 }
 
 /**
+ * 检测候选人是否同意发送简历
+ * 当候选人点击"同意"按钮后，聊天中会出现简历消息卡片
+ */
+export async function detectResumeAgreed(page: Page): Promise<{
+  agreed: boolean
+  resumeCardFound: boolean
+}> {
+  try {
+    const result = await page.evaluate(() => {
+      const chatConversation = document.querySelector('.chat-conversation')
+
+      // 检查是否有简历交换成功的消息卡片
+      // 可能的选择器：简历消息卡片、简历附件、简历交换成功的提示
+      const resumeCardSelectors = [
+        '[class*="resume-card"]',
+        '[class*="resume-message"]',
+        '[class*="exchange-resume"]',
+        '[class*="agree-resume"]',
+        '.message-item [class*="resume"]',
+        '.chat-record [class*="resume"]'
+      ]
+
+      for (const selector of resumeCardSelectors) {
+        const elements = chatConversation?.querySelectorAll(selector)
+        if (elements && elements.length > 0) {
+          // 找到简历卡片
+          return {
+            agreed: true,
+            resumeCardFound: true
+          }
+        }
+      }
+
+      // 检查Vue组件数据中的消息列表
+      if (chatConversation?.__vue__) {
+        const vue = chatConversation.__vue__
+        const listKey = Object.keys(vue).find(k =>
+          Array.isArray(vue[k]) && vue[k].length > 0
+        )
+
+        if (listKey) {
+          const messages = vue[listKey]
+          // 从后往前找最新消息
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i]
+            // 检查是否是简历相关消息
+            // 消息类型可能是：resume, resume_exchange, resume_agree 等
+            if (
+              msg.type === 'resume' ||
+              msg.msgType === 'resume' ||
+              msg.msgType === 'resume_exchange' ||
+              msg.msgType === 'resume_agree' ||
+              msg.contentType === 'resume' ||
+              (msg.text && msg.text.includes('简历')) ||
+              (msg.content && msg.content.includes('简历'))
+            ) {
+              // 检查是否是候选人发送的简历消息（非自己发送）
+              const isSelf = msg.isSelf || msg.self || msg.fromSelf || msg.sender === 'recruiter'
+              if (!isSelf) {
+                return {
+                  agreed: true,
+                  resumeCardFound: true
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 检查聊天消息文本中是否有简历相关的提示
+      const messageItems = chatConversation?.querySelectorAll('.message-item, .chat-item')
+      if (messageItems && messageItems.length > 0) {
+        // 从后往前检查最新消息
+        for (let i = messageItems.length - 1; i >= 0; i--) {
+          const item = messageItems[i]
+          const textContent = item.textContent || ''
+
+          // 检查是否包含简历交换成功的提示
+          if (
+            textContent.includes('已同意发送简历') ||
+            textContent.includes('简历已发送') ||
+            textContent.includes('发送了简历') ||
+            textContent.includes('简历交换成功')
+          ) {
+            // 检查是否是候选人发送的消息（非自己）
+            const isSelf = item.classList.contains('self') ||
+                          item.classList.contains('is-self') ||
+                          !!item.closest('[class*="self"]')
+
+            if (!isSelf) {
+              return {
+                agreed: true,
+                resumeCardFound: true
+              }
+            }
+          }
+        }
+      }
+
+      return { agreed: false, resumeCardFound: false }
+    })
+
+    console.log(`[ResumeHandler] 简历同意状态检测: agreed=${result.agreed}, resumeCardFound=${result.resumeCardFound}`)
+    return result
+  } catch (error) {
+    console.error('[ResumeHandler] 检测简历同意状态失败:', error)
+    return { agreed: false, resumeCardFound: false }
+  }
+}
+
+/**
  * 检测候选人是否发送了简历
  */
 export async function detectResumeSent(page: Page): Promise<{

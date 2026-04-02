@@ -12,7 +12,8 @@ export enum InterviewCandidateStatus {
   WAITING_ROUND_N = 'waiting_round_n',   // 等待第N轮回复
   PASSED = 'passed',                     // 全部通过
   REJECTED = 'rejected',                 // 已拒绝
-  RESUME_REQUESTED = 'resume_requested', // 已发送简历邀请
+  RESUME_REQUESTED = 'resume_requested', // 已发送简历交换请求（等待候选人同意）
+  RESUME_AGREED = 'resume_agreed',       // 候选人已同意发送简历（简历待接收）
   RESUME_RECEIVED = 'resume_received',   // 已收到简历
   EMAILED = 'emailed',                   // 已发送邮件
   ERROR = 'error'                        // 处理出错
@@ -70,6 +71,9 @@ export class InterviewCandidate {
 
   @Column({ nullable: true, type: 'datetime' })
   lastQuestionAt: Date;              // 最后发送问题时间
+
+  @Column({ nullable: true, type: 'datetime' })
+  lastScoredAt: Date;                // 最后评分时间（用于避免重复评分同一条消息）
 
   @CreateDateColumn()
   createdAt: Date;

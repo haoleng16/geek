@@ -27,10 +27,10 @@ import { sendMessage } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
 
 // 导入面试模块
 import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
-import { sendInterviewQuestion, sendResumeRequest, sendRejectionMessage } from './question-sender'
+import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest, sendRejectionMessage } from './question-sender'
 import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, isLatestMessageFromCandidate } from './answer-collector'
 import { scoreAnswer, saveScoreResult } from './scorer'
-import { detectResumeSent, downloadResume } from './resume-handler'
+import { detectResumeSent, detectResumeAgreed, downloadResume } from './resume-handler'
 import { sendResumeEmail, startEmailScheduler, getCandidatesByStatus } from './email-sender'
 import { isAnswerTimeout, shouldSendNextRound } from './status-manager'
 import { randomDelay, canSendMessage, recordMessageSent, getRiskControlConfig, isWithinWorkHours } from './risk-control'
@@ -395,14 +395,15 @@ async function handleCandidateByStatus(
         }))
       }
 
-      // 更新候选人得分
+      // 更新候选人得分和已评分时间（关键：避免重复评分同一条消息）
       const candRepo = ds.getRepository('InterviewCandidate')
       await candRepo.update(candidate.id!, {
         totalScore: scoreResult.totalScore,
         keywordScore: scoreResult.keywordScore,
         llmScore: scoreResult.llmScore,
         llmReason: scoreResult.llmReason,
-        lastReplyAt: new Date()
+        lastReplyAt: new Date(),
+        lastScoredAt: new Date()  // 记录已评分时间，避免重复评分
       })
 
       console.log(`[Interview MainLoop] 评分结果: ${scoreResult.totalScore}分, 通过: ${scoreResult.passed}`)
@@ -415,9 +416,14 @@ async function handleCandidateByStatus(
           // 发送下一轮问题
           await sendInterviewQuestion(ds, page, candidate, nextRound)
         } else {
-          // 全部通过，发送简历邀请（使用自定义话术）
-          const inviteText = jobPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
-          await sendResumeRequest(ds, page, candidate, inviteText)
+          // 全部通过，发送简历交换请求（点击"求简历"按钮）
+          const resumeExchangeSuccess = await sendResumeExchangeRequest(ds, page, candidate)
+          if (!resumeExchangeSuccess) {
+            // 如果点击按钮失败，回退到发送文本消息方式
+            console.log('[Interview MainLoop] 点击"求简历"按钮失败，回退到发送文本消息')
+            const inviteText = jobPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+            await sendResumeRequest(ds, page, candidate, inviteText)
+          }
         }
       } else {
         // 未通过，发送拒绝消息
@@ -427,7 +433,21 @@ async function handleCandidateByStatus(
       break
 
     case InterviewCandidateStatus.RESUME_REQUESTED:
-      // 检查是否发送了简历
+      // 检查候选人是否同意发送简历
+      const resumeAgreedResult = await detectResumeAgreed(page)
+      if (resumeAgreedResult.agreed) {
+        // 候选人已同意，更新状态
+        await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.RESUME_AGREED, {
+          lastReplyAt: new Date()
+        })
+        console.log('[Interview MainLoop] 候选人已同意发送简历，状态更新为 RESUME_AGREED')
+      } else {
+        console.log('[Interview MainLoop] 候选人尚未同意发送简历，继续等待')
+      }
+      break
+
+    case InterviewCandidateStatus.RESUME_AGREED:
+      // 候选人已同意，检查是否发送了简历
       const resumeDetection = await detectResumeSent(page)
       if (resumeDetection.hasResume && resumeDetection.resumeUrl) {
         // 下载简历
@@ -436,6 +456,8 @@ async function handleCandidateByStatus(
           // 发送邮件
           await sendResumeEmail(ds, candidate, resumePath)
         }
+      } else {
+        console.log('[Interview MainLoop] 简历尚未发送到聊天，继续等待')
       }
       break
 

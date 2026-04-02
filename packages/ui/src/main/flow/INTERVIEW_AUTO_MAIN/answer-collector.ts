@@ -237,17 +237,21 @@ export async function isLatestMessageFromCandidate(page: Page): Promise<boolean>
 /**
  * 合并30秒时间窗口内的多条消息
  * 用于将候选人连续发送的多条消息合并为一条答案
+ * @param page Puppeteer 页面
+ * @param candidate 候选人信息
+ * @param windowSeconds 时间窗口（秒）
+ * @returns 合并后的消息文本和消息列表
  */
 export async function mergeMessagesInWindow(
   page: Page,
   candidate: InterviewCandidate,
   windowSeconds: number = 30
-): Promise<{ mergedText: string; messages: any[] }> {
+): Promise<{ mergedText: string; messages: any[]; latestMessageTime: Date | null }> {
   try {
     const history = await getChatHistory(page)
 
     if (!history || history.length === 0) {
-      return { mergedText: '', messages: [] }
+      return { mergedText: '', messages: [], latestMessageTime: null }
     }
 
     // 筛选候选人的消息（非自己发送的）
@@ -259,9 +263,19 @@ export async function mergeMessagesInWindow(
         const msgTime = msg.time ? new Date(msg.time) : new Date()
         return msgTime.getTime() >= new Date(candidate.lastQuestionAt).getTime()
       })
+      .filter(msg => {
+        // 【关键修复】过滤已评分的消息：只取上次评分时间之后的消息
+        if (candidate.lastScoredAt) {
+          const msgTime = msg.time ? new Date(msg.time) : new Date()
+          // 只获取上次评分之后的新消息
+          return msgTime.getTime() > new Date(candidate.lastScoredAt).getTime()
+        }
+        return true
+      })
 
     if (candidateMessages.length === 0) {
-      return { mergedText: '', messages: [] }
+      console.log('[AnswerCollector] 没有新消息需要评分（已评分消息已被过滤）')
+      return { mergedText: '', messages: [], latestMessageTime: null }
     }
 
     // 按时间排序
@@ -270,6 +284,11 @@ export async function mergeMessagesInWindow(
       const timeB = b.time ? new Date(b.time).getTime() : 0
       return timeA - timeB
     })
+
+    // 获取最新消息时间
+    const latestMessageTime = candidateMessages[candidateMessages.length - 1].time
+      ? new Date(candidateMessages[candidateMessages.length - 1].time)
+      : new Date()
 
     // 合并30秒窗口内的消息
     const merged: any[] = []
@@ -300,10 +319,11 @@ export async function mergeMessagesInWindow(
       .join('\n\n')
 
     console.log(`[AnswerCollector] 合并了 ${merged.length} 条消息，时间窗口: ${windowSeconds}秒`)
+    console.log(`[AnswerCollector] 最新消息时间: ${latestMessageTime.toISOString()}`)
 
-    return { mergedText, messages: merged }
+    return { mergedText, messages: merged, latestMessageTime }
   } catch (error) {
     console.error('[AnswerCollector] 消息合并失败:', error)
-    return { mergedText: '', messages: [] }
+    return { mergedText: '', messages: [], latestMessageTime: null }
   }
 }

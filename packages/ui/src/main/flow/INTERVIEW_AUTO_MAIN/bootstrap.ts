@@ -33,8 +33,16 @@ export async function bootstrap() {
   console.log('[Interview Bootstrap] 正在启动浏览器...')
   console.log('[Interview Bootstrap] PUPPETEER_EXECUTABLE_PATH:', process.env.PUPPETEER_EXECUTABLE_PATH)
 
+  // 确保 executablePath 被正确传入
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH
+  if (!executablePath) {
+    console.error('[Interview Bootstrap] 未设置 PUPPETEER_EXECUTABLE_PATH')
+    throw new Error('PUPPETEER_EXECUTABLE_PATH_NOT_SET')
+  }
+
   const browser = await puppeteer.launch({
     headless: false,
+    executablePath,
     ignoreHTTPSErrors: true,
     defaultViewport: {
       width: 1440,

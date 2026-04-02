@@ -57,6 +57,7 @@ import { AddRecruiterTemplateTable1777666666666 } from "./migrations/17776666666
 import { AddRecruiterContactedCandidateTable1777777777777 } from "./migrations/1777777777777-AddRecruiterContactedCandidateTable";
 import { AddSmartReplyRecordTable1788888888888 } from "./migrations/1788888888888-AddSmartReplyRecordTable";
 import { AddInterviewTables1799999999999 } from "./migrations/1799999999999-AddInterviewTables";
+import { AddLastScoredAtToInterviewCandidate1800000000000 } from "./migrations/1800000000000-AddLastScoredAtToInterviewCandidate";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -114,7 +115,8 @@ export function initDb(dbFilePath) {
       AddRecruiterTemplateTable1777666666666,
       AddRecruiterContactedCandidateTable1777777777777,
       AddSmartReplyRecordTable1788888888888,
-      AddInterviewTables1799999999999
+      AddInterviewTables1799999999999,
+      AddLastScoredAtToInterviewCandidate1800000000000
     ],
     migrationsRun: true
   });
