@@ -75,6 +75,19 @@ export class InterviewCandidate {
   @Column({ nullable: true, type: 'datetime' })
   lastScoredAt: Date;                // 最后评分时间（用于避免重复评分同一条消息）
 
+  // 【新增】学历相关字段
+  @Column({ nullable: true })
+  education: string;                 // 最高学历，如"本科"、"硕士"、"博士"
+
+  @Column({ nullable: true })
+  school: string;                    // 毕业院校
+
+  @Column({ nullable: true })
+  major: string;                     // 专业
+
+  @Column({ nullable: true, type: 'text' })
+  educationDetail: string;           // 完整教育经历JSON
+
   @CreateDateColumn()
   createdAt: Date;
 

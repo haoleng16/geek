@@ -54,6 +54,71 @@ const DEFAULT_SCORING_PROMPT = `你是一个专业的招聘助手，请根据候
 只返回JSON，不要其他内容。`
 
 /**
+ * 否定词列表
+ * 当这些词出现在关键词前面近距离内时，视为否定该关键词
+ */
+const NEGATION_WORDS = ['没有', '没', '无', '不曾', '未曾']
+
+/**
+ * 【新增】简短肯定/否定回答列表
+ * 这些回答本身不应该得到高分，需要更多细节
+ */
+const SHORT_ANSWERS = {
+  positive: ['有的', '有', '是的', '是', '对', '对的', '做过', '有过', '可以', '能', '行'],
+  negative: ['没有', '没', '不是', '否', '不行', '不能', '没做过', '没有过']
+}
+
+/**
+ * 【新增】检查回答是否是简短的肯定/否定回答
+ * @returns 'positive' | 'negative' | null
+ */
+function detectShortAnswer(answer: string): 'positive' | 'negative' | null {
+  const trimmed = answer.trim()
+
+  // 检查是否是简短的肯定回答
+  for (const positive of SHORT_ANSWERS.positive) {
+    if (trimmed === positive || trimmed === positive + '。' || trimmed === positive + '！') {
+      return 'positive'
+    }
+  }
+
+  // 检查是否是简短的否定回答
+  for (const negative of SHORT_ANSWERS.negative) {
+    if (trimmed === negative || trimmed === negative + '。' || trimmed === negative + '！') {
+      return 'negative'
+    }
+  }
+
+  return null
+}
+
+/**
+ * 检查关键词是否被否定词修饰
+ * @param answer 回答文本
+ * @param keywordIndex 关键词在回答中的位置
+ * @param keyword 关键词本身
+ * @returns true 表示关键词被否定，不应匹配
+ */
+function isKeywordNegated(answer: string, keywordIndex: number, keyword: string): boolean {
+  // 检查关键词前面的文本（最多取前10个字符）
+  const prefixStart = Math.max(0, keywordIndex - 10)
+  const prefix = answer.substring(prefixStart, keywordIndex)
+
+  // 检查否定词是否出现在关键词前面近距离内（5个字符）
+  const closePrefix = answer.substring(Math.max(0, keywordIndex - 5), keywordIndex)
+
+  for (const negation of NEGATION_WORDS) {
+    // 否定词必须在关键词前面近距离内
+    if (closePrefix.includes(negation)) {
+      console.log(`[Scorer] 关键词 "${keyword}" 被否定词 "${negation}" 修饰，不匹配`)
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
  * 清理消息文本，移除表情符号描述和特殊字符
  * BOSS直聘的表情可能使用 [xxx] 格式描述，如 [微笑]、[有道理] 等
  */
@@ -107,15 +172,27 @@ export function calculateKeywordScore(
     if (typeof keywordsData[0] === 'string') {
       // 简单字符串数组格式
       for (const keyword of keywordsData as string[]) {
-        if (answerLower.includes(keyword.toLowerCase())) {
-          matchedKeywords.push(keyword)
+        const keywordLower = keyword.toLowerCase()
+        const keywordIndex = answerLower.indexOf(keywordLower)
+
+        if (keywordIndex !== -1) {
+          // 检查关键词是否被否定词修饰
+          if (!isKeywordNegated(cleanedAnswer, keywordIndex, keyword)) {
+            matchedKeywords.push(keyword)
+          }
         }
       }
     } else if (keywordsData[0]?.keyword) {
       // 带权重的对象数组格式
       for (const kw of keywordsData as Array<{ keyword: string; weight: number }>) {
-        if (answerLower.includes(kw.keyword.toLowerCase())) {
-          matchedKeywords.push(kw.keyword)
+        const keywordLower = kw.keyword.toLowerCase()
+        const keywordIndex = answerLower.indexOf(keywordLower)
+
+        if (keywordIndex !== -1) {
+          // 检查关键词是否被否定词修饰
+          if (!isKeywordNegated(cleanedAnswer, keywordIndex, kw.keyword)) {
+            matchedKeywords.push(kw.keyword)
+          }
         }
       }
     }
@@ -230,6 +307,7 @@ function parseLlmScoringResponse(content: string): { score: number; reason: stri
  * 综合评分
  * 新逻辑：固定权重（关键词 0.7 + LLM 0.3）
  * 使用问题轮次的配置（keywords 和 llmPrompt）
+ * 【修复】对简短回答进行特殊处理
  */
 export async function scoreAnswer(
   ds: DataSource,
@@ -241,10 +319,39 @@ export async function scoreAnswer(
 ): Promise<ScoreResult> {
   try {
     console.log(`[Scorer] 开始评分，候选人: ${candidate.geekName}`)
+    console.log(`[Scorer] 问题: ${question}`)
+    console.log(`[Scorer] 回答: ${answer}`)
 
     // 固定权重
     const KEYWORD_WEIGHT = 0.7
     const LLM_WEIGHT = 0.3
+
+    // 【新增】检测是否是简短回答
+    const shortAnswerType = detectShortAnswer(answer)
+    if (shortAnswerType) {
+      console.log(`[Scorer] 检测到简短${shortAnswerType === 'positive' ? '肯定' : '否定'}回答: "${answer}"`)
+
+      // 简短回答应该主要依赖 LLM 评分，关键词评分降低权重
+      // 因为简短回答缺乏细节，关键词匹配不可靠
+      const llmResult = await scoreWithLLM(question, answer, questionRound.llmPrompt)
+
+      // 对于简短回答，LLM 权重提高到 80%，关键词降低到 20%
+      const totalScore = Math.round(
+        (shortAnswerType === 'positive' ? 30 : 0) * KEYWORD_WEIGHT * 0.2 +  // 简短肯定回答给30分基础分，否定给0分
+        llmResult.score * 0.8
+      )
+
+      console.log(`[Scorer] 简短回答总分: ${totalScore} (LLM权重: 80%)`)
+
+      return {
+        totalScore,
+        keywordScore: shortAnswerType === 'positive' ? 30 : 0,
+        llmScore: llmResult.score,
+        llmReason: llmResult.reason + '（简短回答，建议追问获取更多细节）',
+        matchedKeywords: [],
+        passed: totalScore >= passThreshold
+      }
+    }
 
     // 1. 关键词评分（使用问题轮次的 keywords 配置）
     const keywordResult = calculateKeywordScore(answer, questionRound.keywords || '[]')

@@ -6,6 +6,8 @@
 
 import minimist from 'minimist'
 import { app, dialog } from 'electron'
+import * as path from 'path'
+import * as fs from 'fs'
 import initPublicIpc from '../../utils/initPublicIpc'
 import { connectToDaemon, sendToDaemon } from '../OPEN_SETTING_WINDOW/connect-to-daemon'
 import { checkShouldExit } from '../../utils/worker'
@@ -30,7 +32,7 @@ import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
 import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest, sendRejectionMessage } from './question-sender'
 import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, isLatestMessageFromCandidate } from './answer-collector'
 import { scoreAnswer, saveScoreResult } from './scorer'
-import { detectResumeSent, detectResumeAgreed, downloadResume } from './resume-handler'
+import { detectResumeSent, downloadResume, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
 import { sendResumeEmail, startEmailScheduler, getCandidatesByStatus } from './email-sender'
 import { isAnswerTimeout, shouldSendNextRound } from './status-manager'
 import { randomDelay, canSendMessage, recordMessageSent, getRiskControlConfig, isWithinWorkHours } from './risk-control'
@@ -216,25 +218,86 @@ const mainLoop = async () => {
         continue
       }
 
-      // 获取聊天列表
-      const friendListData = await getChatList(pageMapByName.boss!)
-      console.log('[Interview MainLoop] 聊天列表数量:', friendListData?.length)
+      // 【新增】主动点击未读tab筛选
+      console.log('[Interview MainLoop] 尝试点击未读tab...')
+      const unreadTabClicked = await clickUnreadTab(pageMapByName.boss!)
+      if (unreadTabClicked) {
+        console.log('[Interview MainLoop] 已切换到未读消息列表')
 
-      if (!friendListData || friendListData.length === 0) {
-        console.log('[Interview MainLoop] 没有聊天项，等待...')
-        await sleep(cfg.scanIntervalSeconds * 1000)
-        continue
+        // 【新增】滚动加载全部未读消息
+        await scrollToLoadAllUnread(pageMapByName.boss!)
+      } else {
+        console.log('[Interview MainLoop] 未找到未读tab，继续使用当前列表')
       }
 
-      // 处理每个候选人
-      for (let i = 0; i < friendListData.length; i++) {
-        const targetChat = friendListData[i]
+      // 获取聊天列表
+      let friendListData = await getChatList(pageMapByName.boss!)
+      console.log('[Interview MainLoop] 聊天列表数量:', friendListData?.length)
 
-        // 检查是否有未读消息
-        if (Number(targetChat.unreadCount) <= 0) {
-          continue
+      // 【修改】筛选出有红色角标（未读消息）的聊天项
+      let unreadItems = friendListData?.filter(item => Number(item.unreadCount) > 0) || []
+      console.log('[Interview MainLoop] 当前未读消息数量:', unreadItems.length)
+
+      // 【修改】如果当前没有未读消息，滚动到底部寻找更多
+      if (unreadItems.length === 0) {
+        console.log('[Interview MainLoop] 当前无未读消息，滚动到底部寻找...')
+
+        let lastItemCount = friendListData?.length || 0
+        let scrollAttempts = 0
+        const maxScrollAttempts = 10 // 最大滚动次数
+
+        while (scrollAttempts < maxScrollAttempts) {
+          // 滚动到底部（向下滚动）
+          await pageMapByName.boss!.evaluate(() => {
+            const chatList = document.querySelector('.chat-list') ||
+                            document.querySelector('[class*="chat-list"]') ||
+                            document.querySelector('[role="list"]')
+            if (chatList) {
+              // 向下滚动到底部
+              chatList.scrollTop = chatList.scrollHeight
+            }
+          })
+
+          await sleep(800) // 等待加载
+
+          // 再次获取聊天列表
+          const newListData = await getChatList(pageMapByName.boss!)
+
+          // 检查是否有新的聊天项出现
+          const newItemCount = newListData?.length || 0
+          console.log(`[Interview MainLoop] 滚动后列表数量: ${newItemCount}, 之前: ${lastItemCount}`)
+
+          // 如果滚动后没有新项出现，停止寻找
+          if (newItemCount <= lastItemCount) {
+            console.log('[Interview MainLoop] 滚动后无新项出现，停止寻找')
+            break
+          }
+
+          // 更新列表并检查是否有未读消息
+          friendListData = newListData
+          unreadItems = newListData?.filter(item => Number(item.unreadCount) > 0) || []
+
+          // 如果找到未读消息，停止滚动
+          if (unreadItems.length > 0) {
+            console.log('[Interview MainLoop] 滚动后发现未读消息，数量:', unreadItems.length)
+            break
+          }
+
+          lastItemCount = newItemCount
+          scrollAttempts++
+          console.log(`[Interview MainLoop] 滚动尝试 ${scrollAttempts}/${maxScrollAttempts}`)
         }
 
+        // 如果滚动后仍无未读消息，等待下一个周期
+        if (unreadItems.length === 0) {
+          console.log('[Interview MainLoop] 滚动后仍未发现未读消息，等待下一周期...')
+          await sleep(cfg.scanIntervalSeconds * 1000)
+          continue
+        }
+      }
+
+      // 【修改】只处理有红色角标的聊天项
+      for (const targetChat of unreadItems) {
         // 检查最后一条是否是自己发的
         if (targetChat.lastIsSelf) {
           continue
@@ -242,8 +305,8 @@ const mainLoop = async () => {
 
         console.log('[Interview MainLoop] 处理候选人:', targetChat.name)
 
-        // 点击聊天项
-        await clickChatItem(pageMapByName.boss!, i)
+        // 【修改】通过聊天项的标识点击
+        await clickChatItemByIdentifier(pageMapByName.boss!, targetChat)
         await sleep(2000)
 
         // 获取候选人信息
@@ -289,6 +352,13 @@ const mainLoop = async () => {
         await randomDelay()
       }
 
+      // 【新增】处理完未读消息后，遍历已请求简历的候选人检查简历
+      console.log('[Interview MainLoop] ========================================')
+      console.log('[Interview MainLoop] 处理完未读消息，开始检查待下载简历...')
+      console.log('[Interview MainLoop] ========================================')
+      await checkAndDownloadPendingResumes(dataSource!, pageMapByName.boss!)
+      console.log('[Interview MainLoop] 简历检查完成，等待下一轮扫描...')
+
       // 等待下一轮扫描
       await sleep(cfg.scanIntervalSeconds * 1000)
 
@@ -328,10 +398,34 @@ async function handleCandidateByStatus(
     case InterviewCandidateStatus.WAITING_ROUND_1:
     case InterviewCandidateStatus.WAITING_ROUND_2:
     case InterviewCandidateStatus.WAITING_ROUND_N:
+      // 【关键修复1】先检查候选人是否刚被评分过，避免重复进入评分流程
+      // 如果 lastScoredAt 在最近30秒内，说明刚评分过，跳过
+      if (candidate.lastScoredAt) {
+        const lastScoredTime = new Date(candidate.lastScoredAt).getTime()
+        const now = Date.now()
+        const thirtySecondsAgo = now - 30 * 1000
+        if (lastScoredTime > thirtySecondsAgo) {
+          console.log(`[Interview MainLoop] 候选人刚在 ${Math.round((now - lastScoredTime) / 1000)} 秒前被评分过，跳过`)
+          break
+        }
+      }
+
       // 检查最新消息是否来自候选人
       const isFromCandidate = await isLatestMessageFromCandidate(page)
       if (!isFromCandidate) {
         console.log('[Interview MainLoop] 最新消息不是候选人发送的，跳过')
+        break
+      }
+
+      // 【关键修复2】检查问答记录是否已评分，避免重复评分
+      const qaRepoCheck = ds.getRepository('InterviewQaRecord')
+      const existingQARecord = await qaRepoCheck.findOne({
+        where: { candidateId: candidate.id, roundNumber: candidate.currentRound }
+      })
+
+      // 如果记录已存在且已评分（scoredAt不为空），跳过本轮评分
+      if (existingQARecord && existingQARecord.scoredAt) {
+        console.log(`[Interview MainLoop] 第${candidate.currentRound}轮已评分（scoredAt: ${existingQARecord.scoredAt}），跳过重复评分`)
         break
       }
 
@@ -361,14 +455,12 @@ async function handleCandidateByStatus(
         jobPosition.passThreshold
       )
 
-      // 保存问答记录（含评分）
+      // 保存问答记录（含评分）- 复用之前的查询结果 existingQARecord
       const qaRepo = ds.getRepository('InterviewQaRecord')
-      const existingRecord = await qaRepo.findOne({
-        where: { candidateId: candidate.id, roundNumber: candidate.currentRound }
-      })
 
-      if (existingRecord) {
-        await qaRepo.update(existingRecord.id!, {
+      if (existingQARecord) {
+        // 记录已存在，更新评分信息
+        await qaRepo.update(existingQARecord.id!, {
           answerText: mergedText,
           answeredAt: new Date(),
           keywordScore: scoreResult.keywordScore,
@@ -379,6 +471,7 @@ async function handleCandidateByStatus(
           scoredAt: new Date()
         })
       } else {
+        // 记录不存在，创建新记录（使用 upsert 确保唯一性）
         await qaRepo.save(qaRepo.create({
           candidateId: candidate.id,
           roundNumber: candidate.currentRound,
@@ -433,31 +526,62 @@ async function handleCandidateByStatus(
       break
 
     case InterviewCandidateStatus.RESUME_REQUESTED:
-      // 检查候选人是否同意发送简历
-      const resumeAgreedResult = await detectResumeAgreed(page)
-      if (resumeAgreedResult.agreed) {
-        // 候选人已同意，更新状态
-        await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.RESUME_AGREED, {
-          lastReplyAt: new Date()
-        })
-        console.log('[Interview MainLoop] 候选人已同意发送简历，状态更新为 RESUME_AGREED')
+      // 检查候选人是否发送了简历卡片（带"同意"按钮）
+      console.log('[Interview MainLoop] 检查候选人是否发送简历卡片...')
+      const resumeCardResult = await detectResumeCard(page)
+
+      if (resumeCardResult.hasCard) {
+        console.log('[Interview MainLoop] 发现候选人发送的简历卡片，准备点击同意按钮...')
+
+        // 点击简历卡片上的"同意"按钮
+        const acceptResult = await clickResumeAcceptButton(page)
+
+        if (acceptResult.success) {
+          console.log('[Interview MainLoop] 已点击同意按钮，等待简历卡片出现...')
+          // 等待1秒让简历卡片出现在聊天界面
+          await sleep(1000)
+
+          // 更新状态为 RESUME_AGREED
+          await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.RESUME_AGREED, {
+            lastReplyAt: new Date()
+          })
+          console.log('[Interview MainLoop] 状态更新为 RESUME_AGREED')
+
+          // 继续处理：尝试下载简历
+          console.log('[Interview MainLoop] 检查简历是否可下载...')
+          const resumeDetection = await detectResumeSent(page)
+          if (resumeDetection.hasResume) {
+            console.log('[Interview MainLoop] 简历卡片已出现，开始下载...')
+            const resumePath = await downloadResumeFromCard(ds, page, candidate)
+            if (resumePath) {
+              console.log('[Interview MainLoop] ★★★ 简历下载成功:', resumePath)
+              // 发送邮件
+              await sendResumeEmail(ds, candidate, resumePath)
+            } else {
+              console.log('[Interview MainLoop] 简历下载失败，将在下一轮继续尝试')
+            }
+          }
+        } else {
+          console.log('[Interview MainLoop] 点击同意按钮失败:', acceptResult.message)
+        }
       } else {
-        console.log('[Interview MainLoop] 候选人尚未同意发送简历，继续等待')
+        console.log('[Interview MainLoop] 候选人尚未发送简历卡片，继续等待')
       }
       break
 
     case InterviewCandidateStatus.RESUME_AGREED:
-      // 候选人已同意，检查是否发送了简历
-      const resumeDetection = await detectResumeSent(page)
-      if (resumeDetection.hasResume && resumeDetection.resumeUrl) {
-        // 下载简历
-        const resumePath = await downloadResume(ds, page, candidate, resumeDetection.resumeUrl)
+      // 已点击同意，检查简历是否可下载
+      console.log('[Interview MainLoop] 检查简历下载状态...')
+      const resumeDownloadCheck = await detectResumeSent(page)
+      if (resumeDownloadCheck.hasResume) {
+        const resumePath = await downloadResumeFromCard(ds, page, candidate)
         if (resumePath) {
+          console.log('[Interview MainLoop] ★★★ 简历下载成功:', resumePath)
           // 发送邮件
           await sendResumeEmail(ds, candidate, resumePath)
         }
       } else {
-        console.log('[Interview MainLoop] 简历尚未发送到聊天，继续等待')
+        console.log('[Interview MainLoop] 简历尚未可下载，继续等待')
       }
       break
 
@@ -578,6 +702,162 @@ async function clickChatItem(page: Page, index: number) {
   }
 }
 
+/**
+ * 【新增】通过标识点击聊天项
+ * 根据候选人名称或ID定位并点击聊天项
+ */
+async function clickChatItemByIdentifier(page: Page, chatItem: any) {
+  try {
+    const clicked = await page.evaluate((item) => {
+      const items = document.querySelectorAll('[role="listitem"]')
+
+      for (const el of items) {
+        const geekItem = el.querySelector('.geek-item') || el
+        const textContent = geekItem?.textContent || ''
+
+        // 通过名称匹配
+        if (item.name && textContent.includes(item.name)) {
+          ;(geekItem as HTMLElement).click()
+          return true
+        }
+
+        // 通过Vue组件数据匹配
+        const vue = (geekItem as any).__vue__ || (el as any).__vue__
+        const props = vue?._props || vue?.$props || vue?.props || {}
+        const data = props.geek || props.item || props.message || props.user || props.data || {}
+
+        if (item.encryptGeekId && data.encryptGeekId === item.encryptGeekId) {
+          ;(geekItem as HTMLElement).click()
+          return true
+        }
+      }
+
+      return false
+    }, chatItem)
+
+    if (!clicked) {
+      console.log('[Interview MainLoop] 未找到匹配的聊天项，尝试点击第一个有未读角标的项')
+      // 备用方案：点击第一个有未读角标的项
+      await page.evaluate(() => {
+        const items = document.querySelectorAll('[role="listitem"]')
+        for (const el of items) {
+          const geekItem = el.querySelector('.geek-item') || el
+          // 检查是否有未读角标
+          const badge = geekItem.querySelector('[class*="unread"]') ||
+                        geekItem.querySelector('[class*="badge"]') ||
+                        geekItem.querySelector('[class*="dot"]')
+          if (badge) {
+            ;(geekItem as HTMLElement).click()
+            return
+          }
+        }
+      })
+    }
+  } catch (error) {
+    console.error('[Interview MainLoop] 通过标识点击聊天项失败:', error)
+  }
+}
+
+/**
+ * 点击"未读"筛选tab
+ * 主动切换到未读消息列表
+ */
+async function clickUnreadTab(page: Page): Promise<boolean> {
+  try {
+    const clicked = await page.evaluate(() => {
+      // 尝试多种可能的选择器
+      const selectors = [
+        '.unread-tab',
+        '[class*="unread"]',
+        'li[data-tab="unread"]',
+        'div[data-type="unread"]',
+        '.tab-item[data-key="unread"]',
+        'span[class*="unread"]',
+        'button[class*="unread"]'
+      ]
+
+      for (const selector of selectors) {
+        const el = document.querySelector(selector)
+        if (el && (el as HTMLElement).click) {
+          ;(el as HTMLElement).click()
+          console.log('[Interview MainLoop] 成功点击未读tab:', selector)
+          return true
+        }
+      }
+
+      // 尝试通过文本内容查找
+      const allTabs = document.querySelectorAll('li, span, div, button')
+      for (const tab of allTabs) {
+        const text = tab.textContent?.trim()
+        if (text === '未读' || text === '未读消息' || text.includes('未读')) {
+          ;(tab as HTMLElement).click()
+          console.log('[Interview MainLoop] 通过文本找到未读tab')
+          return true
+        }
+      }
+
+      return false
+    })
+
+    if (clicked) {
+      await sleep(1500) // 等待列表刷新
+    }
+
+    return clicked
+  } catch (error) {
+    console.error('[Interview MainLoop] 点击未读tab失败:', error)
+    return false
+  }
+}
+
+/**
+ * 滚动加载全部未读消息
+ * 持续滚动直到所有未读消息都加载出来
+ */
+async function scrollToLoadAllUnread(page: Page): Promise<void> {
+  try {
+    let lastCount = 0
+    let scrollAttempts = 0
+    const maxScrollAttempts = 10 // 最大滚动次数，避免无限滚动
+
+    while (scrollAttempts < maxScrollAttempts) {
+      // 获取当前聊天列表数量
+      const currentCount = await page.evaluate(() => {
+        const items = document.querySelectorAll('[role="listitem"]')
+        return items.length
+      })
+
+      console.log(`[Interview MainLoop] 当前聊天项数量: ${currentCount}`)
+
+      // 如果数量不再增加，说明已加载全部
+      if (currentCount === lastCount) {
+        console.log('[Interview MainLoop] 已加载全部未读消息')
+        break
+      }
+
+      lastCount = currentCount
+
+      // 滚动聊天列表
+      await page.evaluate(() => {
+        const chatList = document.querySelector('.chat-list') ||
+                        document.querySelector('[class*="chat-list"]') ||
+                        document.querySelector('[role="list"]')
+
+        if (chatList) {
+          chatList.scrollTop = chatList.scrollHeight
+        }
+      })
+
+      await sleep(500) // 等待加载
+      scrollAttempts++
+    }
+
+    console.log(`[Interview MainLoop] 滚动加载完成，共滚动 ${scrollAttempts} 次`)
+  } catch (error) {
+    console.error('[Interview MainLoop] 滚动加载失败:', error)
+  }
+}
+
 const rerunInterval = (() => {
   let v = Number(process.env.MAIN_BOSSGEEKGO_RERUN_INTERVAL)
   if (isNaN(v)) {
@@ -677,6 +957,200 @@ export async function runEntry() {
   }
 
   process.exit(0)
+}
+
+/**
+ * 【新增】检查并下载待处理的简历
+ * 遍历已请求简历的候选人（RESUME_REQUESTED 或 RESUME_AGREED 状态）
+ * 检查本地文件是否已有简历，如果没有则尝试下载
+ */
+async function checkAndDownloadPendingResumes(
+  ds: DataSource,
+  page: Page
+): Promise<void> {
+  try {
+    console.log('[ResumeCheck] ========================================')
+    console.log('[ResumeCheck] 开始查询待处理简历的候选人...')
+    console.log('[ResumeCheck] 查询条件: status = RESUME_REQUESTED 或 RESUME_AGREED')
+
+    // 查询状态为 RESUME_REQUESTED 或 RESUME_AGREED 的候选人
+    const candidateRepo = ds.getRepository('InterviewCandidate')
+    const pendingCandidates = await candidateRepo.find({
+      where: [
+        { status: InterviewCandidateStatus.RESUME_REQUESTED },
+        { status: InterviewCandidateStatus.RESUME_AGREED }
+      ],
+      order: { updatedAt: 'ASC' }
+    })
+
+    if (!pendingCandidates || pendingCandidates.length === 0) {
+      console.log('[ResumeCheck] 查询结果: 没有待处理简历的候选人')
+      console.log('[ResumeCheck] ========================================')
+      return
+    }
+
+    console.log(`[ResumeCheck] 查询结果: 找到 ${pendingCandidates.length} 个待处理简历的候选人`)
+    pendingCandidates.forEach((c, i) => {
+      console.log(`[ResumeCheck]   ${i + 1}. ${c.geekName} (状态: ${c.status})`)
+    })
+    console.log('[ResumeCheck] ========================================')
+
+    // 获取简历存储目录
+    const resumeDir = path.join(app.getPath('userData'), 'interview-resumes')
+    console.log(`[ResumeCheck] 简历存储目录: ${resumeDir}`)
+
+    for (const candidate of pendingCandidates) {
+      console.log(`[ResumeCheck] ----------------------------------------`)
+      console.log(`[ResumeCheck] 处理候选人: ${candidate.geekName} (ID: ${candidate.encryptGeekId})`)
+      console.log(`[ResumeCheck] 当前状态: ${candidate.status}`)
+
+      // 检查本地文件是否已有简历
+      const existingFiles = fs.readdirSync(resumeDir).filter(f =>
+        f.includes(candidate.geekName) ||
+        (candidate.encryptGeekId && f.includes(candidate.encryptGeekId))
+      )
+
+      if (existingFiles.length > 0) {
+        console.log(`[ResumeCheck] 本地已有简历文件: ${existingFiles.join(', ')}`)
+        console.log(`[ResumeCheck] 跳过下载，继续下一个候选人`)
+        continue
+      }
+
+      console.log(`[ResumeCheck] 本地无简历文件，开始查找聊天...`)
+
+      // 在聊天列表中找到该候选人
+      console.log(`[ResumeCheck] 正在获取聊天列表...`)
+      const chatList = await getChatList(page)
+      console.log(`[ResumeCheck] 聊天列表数量: ${chatList?.length || 0}`)
+
+      const targetChat = chatList?.find(item =>
+        item.name === candidate.geekName ||
+        (candidate.encryptGeekId && item.encryptGeekId === candidate.encryptGeekId)
+      )
+
+      if (!targetChat) {
+        console.log(`[ResumeCheck] 未在聊天列表中找到候选人 ${candidate.geekName}`)
+        console.log(`[ResumeCheck] 可能原因: 聊天列表未加载完全或候选人不在列表中`)
+        continue
+      }
+
+      console.log(`[ResumeCheck] 找到聊天项，准备点击进入...`)
+
+      // 点击进入聊天
+      await clickChatItemByIdentifier(page, targetChat)
+      await sleep(2000)
+
+      console.log(`[ResumeCheck] 已进入聊天，检测简历消息...`)
+
+      // 检测是否有简历消息
+      const resumeDetection = await detectResumeSent(page)
+      console.log(`[ResumeCheck] 简历检测结果: hasResume=${resumeDetection.hasResume}, resumeUrl=${resumeDetection.resumeUrl ? '有' : '无'}`)
+
+      if (resumeDetection.hasResume) {
+        console.log(`[ResumeCheck] ★★★ 检测到简历消息！开始下载... ★★★`)
+
+        if (resumeDetection.resumeUrl) {
+          // 下载简历
+          console.log(`[ResumeCheck] 使用URL下载简历...`)
+          const resumePath = await downloadResume(ds, page, candidate, resumeDetection.resumeUrl)
+          if (resumePath) {
+            console.log(`[ResumeCheck] ★★★ 简历下载成功: ${resumePath} ★★★`)
+          } else {
+            console.log(`[ResumeCheck] 简历下载失败`)
+          }
+        } else {
+          // 没有直接的下载链接，尝试点击简历卡片下载
+          console.log(`[ResumeCheck] 没有直接URL，尝试点击简历卡片下载...`)
+          const downloaded = await tryDownloadResumeFromCard(page, candidate, ds)
+          if (downloaded) {
+            console.log(`[ResumeCheck] ★★★ 通过点击简历卡片下载成功 ★★★`)
+          } else {
+            console.log(`[ResumeCheck] 点击简历卡片下载失败`)
+          }
+        }
+      } else {
+        console.log(`[ResumeCheck] 候选人尚未发送简历，继续等待...`)
+      }
+
+      // 风控延迟
+      console.log(`[ResumeCheck] 等待风控延迟...`)
+      await randomDelay()
+    }
+
+    console.log('[ResumeCheck] ========================================')
+    console.log('[ResumeCheck] 所有待处理简历检查完成')
+    console.log('[ResumeCheck] ========================================')
+  } catch (error) {
+    console.error('[ResumeCheck] 检查待处理简历失败:', error)
+  }
+}
+
+/**
+ * 尝试通过点击简历卡片下载简历
+ */
+async function tryDownloadResumeFromCard(
+  page: Page,
+  candidate: any,
+  ds: DataSource
+): Promise<boolean> {
+  try {
+    console.log(`[ResumeCard] 尝试点击简历卡片下载...`)
+
+    const clicked = await page.evaluate(() => {
+      const chatConversation = document.querySelector('.chat-conversation')
+
+      // 查找简历卡片
+      const resumeCardSelectors = [
+        '[class*="resume-card"]',
+        '[class*="resume-message"]',
+        '[class*="attachment"]',
+        '[class*="file-card"]'
+      ]
+
+      for (const selector of resumeCardSelectors) {
+        const elements = chatConversation?.querySelectorAll(selector)
+        if (elements && elements.length > 0) {
+          // 点击最后一个（最新的）简历卡片
+          const lastElement = elements[elements.length - 1] as HTMLElement
+          lastElement.click()
+          return true
+        }
+      }
+
+      return false
+    })
+
+    if (clicked) {
+      console.log(`[ResumeCard] 已点击简历卡片，等待下载...`)
+      await sleep(3000)
+
+      // 检查是否有下载的文件
+      const resumeDir = path.join(app.getPath('userData'), 'interview-resumes')
+      const files = fs.readdirSync(resumeDir).filter(f =>
+        f.includes(candidate.geekName) ||
+        f.endsWith('.pdf') ||
+        f.endsWith('.doc') ||
+        f.endsWith('.docx')
+      )
+
+      if (files.length > 0) {
+        console.log(`[ResumeCard] 检测到下载的文件: ${files.join(', ')}`)
+        // 更新候选人状态
+        await updateInterviewCandidateStatus(ds, candidate.id, InterviewCandidateStatus.RESUME_RECEIVED)
+        console.log(`[ResumeCard] 已更新候选人状态为 RESUME_RECEIVED`)
+        return true
+      } else {
+        console.log(`[ResumeCard] 未检测到下载的文件`)
+      }
+    } else {
+      console.log(`[ResumeCard] 未找到可点击的简历卡片`)
+    }
+
+    return false
+  } catch (error) {
+    console.error('[ResumeCard] 点击简历卡片失败:', error)
+    return false
+  }
 }
 
 process.once('uncaughtException', (error) => {

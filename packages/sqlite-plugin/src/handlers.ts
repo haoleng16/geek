@@ -824,6 +824,7 @@ export async function saveInterviewCandidate(
 
 /**
  * 获取面试候选人
+ * 修复：当 encryptJobId 为空时，只用 encryptGeekId 查找，避免重复创建
  */
 export async function getInterviewCandidate(
   ds: DataSource,
@@ -831,9 +832,27 @@ export async function getInterviewCandidate(
   encryptJobId: string
 ) {
   const repo = ds.getRepository(InterviewCandidate);
-  return await repo.findOne({
-    where: { encryptGeekId, encryptJobId }
+
+  // 如果 encryptJobId 有值，精确匹配
+  if (encryptJobId) {
+    return await repo.findOne({
+      where: { encryptGeekId, encryptJobId }
+    });
+  }
+
+  // 如果 encryptJobId 为空，只用 encryptGeekId 查找
+  // 优先返回有 encryptJobId 的记录（更完整的数据）
+  const candidates = await repo.find({
+    where: { encryptGeekId }
   });
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  // 优先返回有 encryptJobId 的记录
+  const withJobId = candidates.find(c => c.encryptJobId && c.encryptJobId !== '');
+  return withJobId || candidates[0];
 }
 
 /**
@@ -888,6 +907,7 @@ export async function updateInterviewCandidateStatus(
 
 /**
  * 保存问答记录
+ * 修复：支持 candidateId + roundNumber 查找，避免唯一约束冲突
  */
 export async function saveInterviewQaRecord(
   ds: DataSource,
@@ -898,6 +918,14 @@ export async function saveInterviewQaRecord(
 
   if (data.id) {
     entity = await repo.findOne({ where: { id: data.id } }) || new InterviewQaRecord();
+  } else if (data.candidateId && data.roundNumber) {
+    // 用 candidateId + roundNumber 查找，避免唯一约束冲突
+    entity = await repo.findOne({
+      where: {
+        candidateId: data.candidateId,
+        roundNumber: data.roundNumber
+      }
+    }) || new InterviewQaRecord();
   } else {
     entity = new InterviewQaRecord();
   }

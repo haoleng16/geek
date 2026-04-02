@@ -8,7 +8,7 @@ import { InterviewCandidate } from './InterviewCandidate';
  * 用于记录每轮问答的内容和评分
  */
 @Entity()
-@Index(['candidateId', 'roundNumber'])
+@Index(['candidateId', 'roundNumber'], { unique: true })
 export class InterviewQaRecord {
   @PrimaryGeneratedColumn()
   id: number;

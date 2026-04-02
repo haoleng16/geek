@@ -18,10 +18,26 @@ export interface CandidateAnswer {
 
 /**
  * 获取聊天历史消息
+ * 【修复】使用与 READ_NO_REPLY_AUTO_REMINDER_MAIN 相同的选择器，确保 isSelf 字段正确
  */
 export async function getChatHistory(page: Page): Promise<any[]> {
   try {
     const historyMessageList = await page.evaluate(() => {
+      // 【关键修复】优先使用与 READ_NO_REPLY_AUTO_REMINDER_MAIN 相同的选择器
+      // 这个选择器返回的消息对象包含正确的 isSelf 字段
+      const chatRecordVue = document.querySelector('.message-content .chat-record')?.__vue__
+      if (chatRecordVue?.list$ && Array.isArray(chatRecordVue.list$)) {
+        console.log('[AnswerCollector] 使用 .message-content .chat-record 选择器获取到消息')
+        return chatRecordVue.list$.map(msg => ({
+          ...msg,
+          // 保留原始字段，同时添加标准化的字段
+          _originalIsSelf: msg.isSelf,
+          _originalSelf: msg.self,
+          _source: 'chat-record'
+        }))
+      }
+
+      // 备选方案：尝试从 chat-conversation 获取
       const chatConversation = document.querySelector('.chat-conversation')
       if (chatConversation?.__vue__) {
         const vue = chatConversation.__vue__
@@ -30,7 +46,11 @@ export async function getChatHistory(page: Page): Promise<any[]> {
         const possibleListKeys = ['list$', 'list', 'messages', 'messageList', 'data', 'items', 'records', 'chatList']
         for (const key of possibleListKeys) {
           if (vue[key] && Array.isArray(vue[key]) && vue[key].length > 0) {
-            return vue[key]
+            console.log(`[AnswerCollector] 使用 chat-conversation.${key} 获取到消息`)
+            return vue[key].map(msg => ({
+              ...msg,
+              _source: `chat-conversation.${key}`
+            }))
           }
         }
 
@@ -40,31 +60,83 @@ export async function getChatHistory(page: Page): Promise<any[]> {
             if (Array.isArray(vue.$data[key]) && vue.$data[key].length > 0) {
               const firstItem = vue.$data[key][0]
               if (firstItem && (firstItem.text || firstItem.content || firstItem.message)) {
-                return vue.$data[key]
+                console.log(`[AnswerCollector] 使用 chat-conversation.$data.${key} 获取到消息`)
+                return vue.$data[key].map(msg => ({
+                  ...msg,
+                  _source: `chat-conversation.$data.${key}`
+                }))
               }
             }
           }
         }
       }
 
-      // 从 DOM 获取
+      // 从 DOM 获取（最后的备选方案）
       const messageEls = chatConversation?.querySelectorAll('[class*="message"], [class*="msg"], [class*="chat-item"]')
       if (messageEls && messageEls.length > 0) {
+        console.log('[AnswerCollector] 使用 DOM 方式获取消息')
         return [...messageEls].map(el => ({
           text: el.textContent || '',
-          isSelf: el.classList.contains('self') || el.classList.contains('is-self') || !!el.closest('[class*="self"]'),
-          className: el.className
+          // 【修复】增强 DOM 方式的 isSelf 判断
+          isSelf: el.classList.contains('self') ||
+                  el.classList.contains('is-self') ||
+                  !!el.closest('[class*="self"]') ||
+                  !!el.closest('[class*="my-message"]') ||
+                  el.classList.contains('mine') ||
+                  el.getAttribute('data-self') === 'true',
+          className: el.className,
+          _source: 'dom'
         }))
       }
 
       return []
     })
 
+    // 【新增】打印完整的消息对象结构，帮助调试
+    if (historyMessageList && historyMessageList.length > 0) {
+      console.log(`[AnswerCollector] ========== 消息结构诊断开始 ==========`)
+      console.log(`[AnswerCollector] 总消息数: ${historyMessageList.length}`)
+
+      // 打印前3条消息的完整结构
+      historyMessageList.slice(0, 3).forEach((msg, idx) => {
+        console.log(`[AnswerCollector] 消息${idx + 1} 完整结构:`, JSON.stringify(msg, null, 2).substring(0, 500))
+        console.log(`[AnswerCollector] 消息${idx + 1} isSelf=${msg.isSelf}, self=${msg.self}, fromSelf=${msg.fromSelf}`)
+        console.log(`[AnswerCollector] 消息${idx + 1} 文本: "${(msg.text || msg.content || msg.message || '').substring(0, 50)}"`)
+      })
+
+      const selfCount = historyMessageList.filter(msg => msg.isSelf).length
+      console.log(`[AnswerCollector] 统计: 招聘者发送 ${selfCount} 条, 候选人发送 ${historyMessageList.length - selfCount} 条`)
+      console.log(`[AnswerCollector] ========== 消息结构诊断结束 ==========`)
+    }
+
     return historyMessageList || []
   } catch (error) {
     console.error('[AnswerCollector] 获取聊天历史失败:', error)
     return []
   }
+}
+
+/**
+ * 对消息列表进行去重
+ * 使用消息文本内容作为去重依据
+ */
+function deduplicateMessages(messages: any[]): any[] {
+  const seen = new Set<string>()
+  const result: any[] = []
+
+  for (const msg of messages) {
+    const text = msg.text || msg.content || msg.message || ''
+    const time = msg.time || ''
+    // 使用 文本+时间 作为唯一标识
+    const key = `${text.trim()}_${time}`
+
+    if (!seen.has(key) && text.trim()) {
+      seen.add(key)
+      result.push(msg)
+    }
+  }
+
+  return result
 }
 
 /**
@@ -218,9 +290,90 @@ export async function mergeMultipleAnswers(
 
 /**
  * 检查消息发送者是否是自己（招聘者）
+ * 【修复】增强判断逻辑，支持更多字段格式
  */
 export function isSelfMessage(msg: any): boolean {
-  return msg.isSelf || msg.self || msg.fromSelf || msg.sender === 'recruiter'
+  // 优先检查 isSelf 字段（BOSS直聘标准字段）
+  if (msg.isSelf === true) return true
+  if (msg.isSelf === false) return false
+
+  // 检查其他可能的字段
+  if (msg.self === true) return true
+  if (msg.fromSelf === true) return true
+  if (msg.sender === 'recruiter') return true
+
+  // 【新增】检查 direction 字段（某些版本可能使用）
+  if (msg.direction === 'self' || msg.direction === 'out') return true
+  if (msg.direction === 'other' || msg.direction === 'in') return false
+
+  // 【新增】检查 from 字段
+  if (msg.from === 'self' || msg.from === 'recruiter') return true
+  if (msg.from === 'other' || msg.from === 'candidate') return false
+
+  // 【新增】检查 messageSource 字段
+  if (msg.messageSource === 'self') return true
+
+  // 【新增】检查 to 字段（某些结构可能用 to 表示接收方）
+  if (msg.to === 'self' || msg.to === 'recruiter') return false
+  if (msg.to === 'other' || msg.to === 'candidate') return true
+
+  // 默认返回 false（视为候选人消息）
+  return false
+}
+
+/**
+ * 【新增】检查文本是否看起来像问题（而非回答）
+ * 用于过滤被错误识别为回答的问题文本
+ */
+function textLooksLikeQuestion(text: string): boolean {
+  if (!text) return false
+
+  // 检查是否以问号结尾
+  if (text.trim().endsWith('？') || text.trim().endsWith('?')) return true
+
+  // 检查是否包含典型的问题开头
+  const questionStarts = ['请问', '你之前', '你是否', '有没有', '是否', '能不能', '可以吗', '什么', '怎么', '如何', '为什么', '哪个', '哪些', '多少']
+  for (const start of questionStarts) {
+    if (text.includes(start)) {
+      // 但如果文本很短且只是确认（如"有的"），不算问题
+      if (text.length < 20 && (text.includes('有的') || text.includes('没有') || text.includes('是') || text.includes('不是'))) {
+        return false
+      }
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * 【新增】清理候选人的回答文本
+ * 移除被错误混入的问题内容
+ */
+export function cleanCandidateAnswer(rawText: string): string {
+  if (!rawText) return ''
+
+  // 按换行分割
+  const lines = rawText.split(/\n+/)
+
+  // 过滤掉看起来像问题的行
+  const answerLines = lines.filter(line => {
+    const trimmed = line.trim()
+    if (!trimmed) return false
+
+    // 如果这行看起来像问题，过滤掉
+    if (textLooksLikeQuestion(trimmed)) {
+      console.log(`[AnswerCollector] 过滤掉问题行: "${trimmed.substring(0, 50)}"`)
+      return false
+    }
+
+    return true
+  })
+
+  const cleaned = answerLines.join('\n').trim()
+  console.log(`[AnswerCollector] 清理回答: 原始${rawText.length}字符 -> 清理后${cleaned.length}字符`)
+
+  return cleaned
 }
 
 /**
@@ -254,49 +407,83 @@ export async function mergeMessagesInWindow(
       return { mergedText: '', messages: [], latestMessageTime: null }
     }
 
+    // 【关键修复】对消息进行去重，避免DOM重复导致同一条消息被多次读取
+    const dedupedHistory = deduplicateMessages(history)
+    console.log(`[AnswerCollector] 历史消息: ${history.length}条, 去重后: ${dedupedHistory.length}条`)
+
+    // 【调试】打印消息详情，帮助排查问题
+    const sampleMessages = dedupedHistory.slice(0, 5).map(msg => ({
+      text: (msg.text || msg.content || msg.message || '').substring(0, 30),
+      isSelf: msg.isSelf,
+      time: msg.time
+    }))
+    console.log(`[AnswerCollector] 示例消息:`, JSON.stringify(sampleMessages))
+
     // 筛选候选人的消息（非自己发送的）
-    const candidateMessages = history
-      .filter(msg => !isSelfMessage(msg))
+    const candidateMessages = dedupedHistory
+      .filter(msg => {
+        const isSelf = isSelfMessage(msg)
+        if (!isSelf) {
+          console.log(`[AnswerCollector] 候选人消息: "${(msg.text || msg.content || msg.message || '').substring(0, 50)}"`)
+        }
+        return !isSelf
+      })
       .filter(msg => {
         // 只取发送问题后的消息
-        if (!candidate.lastQuestionAt) return false
+        if (!candidate.lastQuestionAt) {
+          console.log('[AnswerCollector] lastQuestionAt 为空，跳过该消息')
+          return false
+        }
         const msgTime = msg.time ? new Date(msg.time) : new Date()
-        return msgTime.getTime() >= new Date(candidate.lastQuestionAt).getTime()
+        const questionTime = new Date(candidate.lastQuestionAt)
+        const isAfterQuestion = msgTime.getTime() >= questionTime.getTime()
+        console.log(`[AnswerCollector] 消息时间检查: msgTime=${msgTime.toISOString()}, questionTime=${questionTime.toISOString()}, isAfter=${isAfterQuestion}`)
+        return isAfterQuestion
       })
       .filter(msg => {
         // 【关键修复】过滤已评分的消息：只取上次评分时间之后的消息
         if (candidate.lastScoredAt) {
           const msgTime = msg.time ? new Date(msg.time) : new Date()
+          const scoredTime = new Date(candidate.lastScoredAt)
           // 只获取上次评分之后的新消息
-          return msgTime.getTime() > new Date(candidate.lastScoredAt).getTime()
+          const isNew = msgTime.getTime() > scoredTime.getTime()
+          console.log(`[AnswerCollector] 评分时间检查: msgTime=${msgTime.toISOString()}, scoredTime=${scoredTime.toISOString()}, isNew=${isNew}`)
+          return isNew
         }
+        console.log('[AnswerCollector] lastScoredAt 为空，不过滤已评分消息')
         return true
       })
 
-    if (candidateMessages.length === 0) {
+    console.log(`[AnswerCollector] 筛选后候选人消息数量: ${candidateMessages.length}`)
+
+    // 【修复】最多只取3条消息回答一个问题
+    const maxMessages = 3
+    const limitedMessages = candidateMessages.slice(0, maxMessages)
+
+    if (limitedMessages.length === 0) {
       console.log('[AnswerCollector] 没有新消息需要评分（已评分消息已被过滤）')
       return { mergedText: '', messages: [], latestMessageTime: null }
     }
 
     // 按时间排序
-    candidateMessages.sort((a, b) => {
+    limitedMessages.sort((a, b) => {
       const timeA = a.time ? new Date(a.time).getTime() : 0
       const timeB = b.time ? new Date(b.time).getTime() : 0
       return timeA - timeB
     })
 
     // 获取最新消息时间
-    const latestMessageTime = candidateMessages[candidateMessages.length - 1].time
-      ? new Date(candidateMessages[candidateMessages.length - 1].time)
+    const latestMessageTime = limitedMessages[limitedMessages.length - 1].time
+      ? new Date(limitedMessages[limitedMessages.length - 1].time)
       : new Date()
 
-    // 合并30秒窗口内的消息
+    // 合并30秒窗口内的消息（最多3条）
     const merged: any[] = []
-    let currentGroup: any[] = [candidateMessages[0]]
+    let currentGroup: any[] = [limitedMessages[0]]
 
-    for (let i = 1; i < candidateMessages.length; i++) {
-      const prevMsg = candidateMessages[i - 1]
-      const currMsg = candidateMessages[i]
+    for (let i = 1; i < limitedMessages.length; i++) {
+      const prevMsg = limitedMessages[i - 1]
+      const currMsg = limitedMessages[i]
 
       const prevTime = prevMsg.time ? new Date(prevMsg.time).getTime() : 0
       const currTime = currMsg.time ? new Date(currMsg.time).getTime() : 0
@@ -313,13 +500,22 @@ export async function mergeMessagesInWindow(
     merged.push(...currentGroup)
 
     // 合并文本
-    const mergedText = merged
+    const rawText = merged
       .map(msg => msg.text || msg.content || msg.message || '')
       .filter(text => text.trim())
       .join('\n\n')
 
-    console.log(`[AnswerCollector] 合并了 ${merged.length} 条消息，时间窗口: ${windowSeconds}秒`)
+    // 【关键修复】清理候选人的回答，移除被错误混入的问题内容
+    const mergedText = cleanCandidateAnswer(rawText)
+
+    console.log(`[AnswerCollector] 合并了 ${merged.length} 条消息（最多取${maxMessages}条），时间窗口: ${windowSeconds}秒`)
     console.log(`[AnswerCollector] 最新消息时间: ${latestMessageTime.toISOString()}`)
+
+    // 如果清理后文本为空，返回空结果
+    if (!mergedText) {
+      console.log('[AnswerCollector] 清理后回答为空，可能全是问题内容')
+      return { mergedText: '', messages: [], latestMessageTime: null }
+    }
 
     return { mergedText, messages: merged, latestMessageTime }
   } catch (error) {
