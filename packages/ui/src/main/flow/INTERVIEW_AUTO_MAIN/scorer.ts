@@ -97,25 +97,27 @@ function detectShortAnswer(answer: string): 'positive' | 'negative' | null {
  * @param answer 回答文本
  * @param keywordIndex 关键词在回答中的位置
  * @param keyword 关键词本身
+ * @param customNegationWords 自定义否定词数组（可选）
  * @returns true 表示关键词被否定，不应匹配
  */
-function isKeywordNegated(answer: string, keywordIndex: number, keyword: string): boolean {
-  // 检查关键词前面的文本（最多取前10个字符）
-  const prefixStart = Math.max(0, keywordIndex - 10)
-  const prefix = answer.substring(prefixStart, keywordIndex)
+function isKeywordNegated(answer: string, keywordIndex: number, keyword: string, customNegationWords?: string[]): boolean {
+  // 使用自定义否定词，如果没有则使用默认否定词
+  const negationWords = customNegationWords && customNegationWords.length > 0
+    ? customNegationWords
+    : NEGATION_WORDS;
 
   // 检查否定词是否出现在关键词前面近距离内（5个字符）
-  const closePrefix = answer.substring(Math.max(0, keywordIndex - 5), keywordIndex)
+  const closePrefix = answer.substring(Math.max(0, keywordIndex - 5), keywordIndex);
 
-  for (const negation of NEGATION_WORDS) {
+  for (const negation of negationWords) {
     // 否定词必须在关键词前面近距离内
     if (closePrefix.includes(negation)) {
-      console.log(`[Scorer] 关键词 "${keyword}" 被否定词 "${negation}" 修饰，不匹配`)
-      return true
+      console.log(`[Scorer] 关键词 "${keyword}" 被否定词 "${negation}" 修饰，不匹配`);
+      return true;
     }
   }
 
-  return false
+  return false;
 }
 
 /**
@@ -143,10 +145,12 @@ function cleanMessageText(text: string): string {
  * keywordsJson 格式支持两种：
  *   1. 简单字符串数组: ["redis", "cache"]
  *   2. 带权重的对象数组: [{"keyword": "redis", "weight": 10}, {"keyword": "cache", "weight": 5}]
+ * negationWordsJson 格式: 简单字符串数组 ["没有", "没", "无"]
  */
 export function calculateKeywordScore(
   answer: string,
-  keywordsJson: string
+  keywordsJson: string,
+  negationWordsJson?: string
 ): { score: number; matchedKeywords: string[] } {
   try {
     if (!keywordsJson || !answer) {
@@ -156,6 +160,20 @@ export function calculateKeywordScore(
     const keywordsData = JSON.parse(keywordsJson)
     if (!keywordsData || keywordsData.length === 0) {
       return { score: 0, matchedKeywords: [] }
+    }
+
+    // 解析自定义否定词
+    let customNegationWords: string[] | undefined = undefined
+    if (negationWordsJson) {
+      try {
+        const parsed = JSON.parse(negationWordsJson)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          customNegationWords = parsed
+          console.log(`[Scorer] 使用自定义否定词: ${customNegationWords.join(', ')}`)
+        }
+      } catch (e) {
+        console.warn('[Scorer] 解析否定词失败，使用默认否定词')
+      }
     }
 
     // 清理消息文本，移除表情符号描述
@@ -177,7 +195,7 @@ export function calculateKeywordScore(
 
         if (keywordIndex !== -1) {
           // 检查关键词是否被否定词修饰
-          if (!isKeywordNegated(cleanedAnswer, keywordIndex, keyword)) {
+          if (!isKeywordNegated(cleanedAnswer, keywordIndex, keyword, customNegationWords)) {
             matchedKeywords.push(keyword)
           }
         }
@@ -190,7 +208,7 @@ export function calculateKeywordScore(
 
         if (keywordIndex !== -1) {
           // 检查关键词是否被否定词修饰
-          if (!isKeywordNegated(cleanedAnswer, keywordIndex, kw.keyword)) {
+          if (!isKeywordNegated(cleanedAnswer, keywordIndex, kw.keyword, customNegationWords)) {
             matchedKeywords.push(kw.keyword)
           }
         }
@@ -353,8 +371,8 @@ export async function scoreAnswer(
       }
     }
 
-    // 1. 关键词评分（使用问题轮次的 keywords 配置）
-    const keywordResult = calculateKeywordScore(answer, questionRound.keywords || '[]')
+    // 1. 关键词评分（使用问题轮次的 keywords 配置和 negationWords 配置）
+    const keywordResult = calculateKeywordScore(answer, questionRound.keywords || '[]', questionRound.negationWords)
     console.log(`[Scorer] 关键词得分: ${keywordResult.score}, 匹配关键词: ${keywordResult.matchedKeywords.join(', ')}`)
 
     // 2. LLM 评分（使用问题轮次的自定义提示词）

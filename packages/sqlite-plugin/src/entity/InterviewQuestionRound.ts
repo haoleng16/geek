@@ -29,6 +29,11 @@ export class InterviewQuestionRound {
   @Column({ nullable: true, type: 'text' })
   llmPrompt: string;                 // 自定义评分提示词，支持 {question} 和 {answer} 占位符
 
+  // 新增：否定词配置（JSON数组）
+  // 当这些词出现在关键词前面近距离内时，视为否定该关键词，评分不通过
+  @Column({ nullable: true, type: 'text' })
+  negationWords: string;             // 格式: ["没有", "没", "无", "不曾", "未曾"]
+
   @CreateDateColumn()
   createdAt: Date;
 

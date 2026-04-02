@@ -60,6 +60,7 @@ import { AddInterviewTables1799999999999 } from "./migrations/1799999999999-AddI
 import { AddLastScoredAtToInterviewCandidate1800000000000 } from "./migrations/1800000000000-AddLastScoredAtToInterviewCandidate";
 import { AddQaRecordUniqueConstraint1800000000001 } from "./migrations/1800000000001-AddQaRecordUniqueConstraint";
 import { AddEducationFieldsToInterviewCandidate1800000000002 } from "./migrations/1800000000002-AddEducationFieldsToInterviewCandidate";
+import { AddNegationWordsToInterviewQuestionRound1800000000003 } from "./migrations/1800000000003-AddNegationWordsToInterviewQuestionRound";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -120,7 +121,8 @@ export function initDb(dbFilePath) {
       AddInterviewTables1799999999999,
       AddLastScoredAtToInterviewCandidate1800000000000,
       AddQaRecordUniqueConstraint1800000000001,
-      AddEducationFieldsToInterviewCandidate1800000000002
+      AddEducationFieldsToInterviewCandidate1800000000002,
+      AddNegationWordsToInterviewQuestionRound1800000000003
     ],
     migrationsRun: true
   });

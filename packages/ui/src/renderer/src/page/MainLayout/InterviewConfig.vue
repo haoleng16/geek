@@ -105,6 +105,19 @@
                   />
                 </el-form-item>
 
+                <el-form-item label="否定词">
+                  <el-select
+                    v-model="round.negationWords"
+                    multiple
+                    filterable
+                    allow-create
+                    default-first-option
+                    placeholder="输入否定词后回车添加（如：没有、没、无）"
+                    style="width: 100%"
+                  />
+                  <div class="form-tip">当这些词出现在关键词前面时，视为否定该关键词，评分不通过</div>
+                </el-form-item>
+
                 <el-form-item label="关键词权重">
                   <el-input-number v-model="round.keywordScore" :min="0" :max="100" />
                   <span class="form-tip">%</span>
@@ -222,6 +235,7 @@ const getDefaultJobForm = () => ({
       questionText: '',
       waitTimeoutMinutes: 60,
       keywords: [],
+      negationWords: [],
       keywordScore: 50,
       llmScore: 50
     }
@@ -276,7 +290,8 @@ function handleEditJob(row: any) {
     ...row,
     questionRounds: row.questionRounds?.map((r: any) => ({
       ...r,
-      keywords: r.keywords ? JSON.parse(r.keywords) : []
+      keywords: r.keywords ? JSON.parse(r.keywords) : [],
+      negationWords: r.negationWords ? JSON.parse(r.negationWords) : []
     })) || []
   }
   dialogVisible.value = true
@@ -307,6 +322,7 @@ function addQuestionRound() {
     questionText: '',
     waitTimeoutMinutes: 60,
     keywords: [],
+    negationWords: [],
     keywordScore: 50,
     llmScore: 50
   })
@@ -338,7 +354,8 @@ async function handleSaveJob() {
       ...jobForm.value,
       questionRounds: jobForm.value.questionRounds.map(r => ({
         ...r,
-        keywords: JSON.stringify(r.keywords || [])
+        keywords: JSON.stringify(r.keywords || []),
+        negationWords: JSON.stringify(r.negationWords || [])
       }))
     }
 
