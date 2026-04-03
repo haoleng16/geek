@@ -10,6 +10,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import initPublicIpc from '../../utils/initPublicIpc'
 import { connectToDaemon, sendToDaemon } from '../OPEN_SETTING_WINDOW/connect-to-daemon'
+import { initInterviewIpcHandlers } from './ipc-handlers'
 import { checkShouldExit } from '../../utils/worker'
 import { getLastUsedAndAvailableBrowser } from '../DOWNLOAD_DEPENDENCIES/utils/browser-history'
 import { configWithBrowserAssistant } from '../../features/config-with-browser-assistant'
@@ -30,7 +31,7 @@ import { sendMessage } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
 // 导入面试模块
 import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
 import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest, sendRejectionMessage } from './question-sender'
-import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, isLatestMessageFromCandidate } from './answer-collector'
+import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, isLatestMessageFromCandidate, deduplicateSentencesInText, isDuplicateAnswer } from './answer-collector'
 import { scoreAnswer, saveScoreResult } from './scorer'
 import { detectResumeSent, downloadResume, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
 import { sendResumeEmail, startEmailScheduler, getCandidatesByStatus } from './email-sender'
@@ -357,7 +358,15 @@ const mainLoop = async () => {
       console.log('[Interview MainLoop] 处理完未读消息，开始检查待下载简历...')
       console.log('[Interview MainLoop] ========================================')
       await checkAndDownloadPendingResumes(dataSource!, pageMapByName.boss!)
-      console.log('[Interview MainLoop] 简历检查完成，等待下一轮扫描...')
+      console.log('[Interview MainLoop] 简历检查完成')
+
+      // 【关键修复】主动检查等待回复的候选人（不依赖未读角标）
+      // 解决问题：如果未读角标被清除，候选人不会出现在 unreadItems 中，导致回答不被收集
+      console.log('[Interview MainLoop] ========================================')
+      console.log('[Interview MainLoop] 开始主动检查等待回复的候选人...')
+      console.log('[Interview MainLoop] ========================================')
+      await checkWaitingCandidatesForReply(dataSource!, pageMapByName.boss!, cfg)
+      console.log('[Interview MainLoop] 等待回复候选人检查完成，等待下一轮扫描...')
 
       // 等待下一轮扫描
       await sleep(cfg.scanIntervalSeconds * 1000)
@@ -404,7 +413,7 @@ async function handleCandidateByStatus(
         const lastScoredTime = new Date(candidate.lastScoredAt).getTime()
         const now = Date.now()
         const thirtySecondsAgo = now - 30 * 1000
-        if (lastScoredTime > thirtySecondsAgo) {
+        if (lastScoredTime >= thirtySecondsAgo) {
           console.log(`[Interview MainLoop] 候选人刚在 ${Math.round((now - lastScoredTime) / 1000)} 秒前被评分过，跳过`)
           break
         }
@@ -430,13 +439,22 @@ async function handleCandidateByStatus(
       }
 
       // 合并30秒窗口内的消息
-      const { mergedText } = await mergeMessagesInWindow(page, candidate, 30)
-      if (!mergedText) {
+      const { mergedText: rawMergedText } = await mergeMessagesInWindow(page, candidate, 30)
+      if (!rawMergedText) {
         console.log('[Interview MainLoop] 未找到候选人回复内容')
         break
       }
 
-      console.log('[Interview MainLoop] 合并回复:', mergedText.substring(0, 100))
+      // 【新增】对回答文本内部重复句子进行去重
+      const mergedText = deduplicateSentencesInText(rawMergedText)
+      console.log('[Interview MainLoop] 合并回复(去重后):', mergedText.substring(0, 100))
+
+      // 【新增】检查是否与已有记录重复（同一问题相同回答）
+      const isDup = await isDuplicateAnswer(ds, candidate.id!, candidate.currentRound, mergedText)
+      if (isDup) {
+        console.log('[Interview MainLoop] 回答内容与已有记录重复，跳过评分和保存')
+        break
+      }
 
       // 获取问题轮次配置
       const questionRound = jobPosition.questionRounds?.find((r: any) => r.roundNumber === candidate.currentRound)
@@ -918,6 +936,9 @@ export async function runEntry() {
   try {
     dataSource = await dbInitPromise
     console.log('[Interview runEntry] 数据库初始化成功')
+    // 初始化面试 IPC handlers
+    initInterviewIpcHandlers(dataSource)
+    console.log('[Interview runEntry] IPC handlers 已初始化')
   } catch (dbErr) {
     console.error('[Interview runEntry] 数据库初始化失败:', dbErr)
   }
@@ -1082,6 +1103,101 @@ async function checkAndDownloadPendingResumes(
     console.log('[ResumeCheck] ========================================')
   } catch (error) {
     console.error('[ResumeCheck] 检查待处理简历失败:', error)
+  }
+}
+
+/**
+ * 【关键修复】主动检查等待回复的候选人
+ * 不依赖未读角标机制，直接查询数据库中的 WAITING 状态候选人
+ * 解决问题：如果未读角标被清除，候选人不会出现在 unreadItems 中，导致回答不被收集
+ */
+async function checkWaitingCandidatesForReply(
+  ds: DataSource,
+  page: Page,
+  config: any
+): Promise<void> {
+  try {
+    console.log('[WaitingCheck] 查询状态为 WAITING 的候选人...')
+
+    // 查询状态为 WAITING 的候选人
+    const waitingCandidates = await getPendingInterviewCandidates(ds, [
+      InterviewCandidateStatus.WAITING_ROUND_1,
+      InterviewCandidateStatus.WAITING_ROUND_2,
+      InterviewCandidateStatus.WAITING_ROUND_N
+    ])
+
+    if (!waitingCandidates || waitingCandidates.length === 0) {
+      console.log('[WaitingCheck] 查询结果: 没有等待回复的候选人')
+      console.log('[WaitingCheck] ========================================')
+      return
+    }
+
+    console.log(`[WaitingCheck] 查询结果: 找到 ${waitingCandidates.length} 个等待回复的候选人`)
+    waitingCandidates.forEach((c, i) => {
+      console.log(`[WaitingCheck]   ${i + 1}. ${c.geekName} (状态: ${c.status}, 当前轮次: ${c.currentRound})`)
+    })
+    console.log('[WaitingCheck] ========================================')
+
+    // 获取聊天列表
+    console.log('[WaitingCheck] 正在获取聊天列表...')
+    const chatList = await getChatList(page)
+    console.log(`[WaitingCheck] 聊天列表数量: ${chatList?.length || 0}`)
+
+    for (const candidate of waitingCandidates) {
+      console.log(`[WaitingCheck] ----------------------------------------`)
+      console.log(`[WaitingCheck] 处理候选人: ${candidate.geekName} (ID: ${candidate.encryptGeekId})`)
+      console.log(`[WaitingCheck] 当前状态: ${candidate.status}, 当前轮次: ${candidate.currentRound}`)
+
+      // 检查候选人是否刚被评分过，避免重复处理（30秒内评分过的跳过）
+      if (candidate.lastScoredAt) {
+        const lastScoredTime = new Date(candidate.lastScoredAt).getTime()
+        const now = Date.now()
+        const thirtySecondsAgo = now - 30 * 1000
+        if (lastScoredTime >= thirtySecondsAgo) {
+          console.log(`[WaitingCheck] 候选人刚在 ${Math.round((now - lastScoredTime) / 1000)} 秒前被评分过，跳过`)
+          continue
+        }
+      }
+
+      // 在聊天列表中查找该候选人
+      const targetChat = chatList?.find(item =>
+        item.name === candidate.geekName ||
+        (candidate.encryptGeekId && item.encryptGeekId === candidate.encryptGeekId)
+      )
+
+      if (!targetChat) {
+        console.log(`[WaitingCheck] 未在聊天列表中找到候选人 ${candidate.geekName}`)
+        // 尝试滚动加载更多聊天项
+        continue
+      }
+
+      console.log(`[WaitingCheck] 找到聊天项，准备点击进入...`)
+
+      // 点击进入聊天
+      await clickChatItemByIdentifier(page, targetChat)
+      await sleep(2000)
+
+      // 获取岗位配置
+      const jobPosition = await getInterviewJobPositionWithDetails(ds, candidate.jobPositionId)
+      if (!jobPosition) {
+        console.log(`[WaitingCheck] 未找到岗位配置 (jobPositionId: ${candidate.jobPositionId})，跳过`)
+        continue
+      }
+
+      // 调用 handleCandidateByStatus 检查是否有新回复
+      console.log(`[WaitingCheck] 调用 handleCandidateByStatus 检查回复...`)
+      await handleCandidateByStatus(ds, page, candidate, jobPosition, config)
+
+      // 风控延迟
+      console.log(`[WaitingCheck] 等待风控延迟...`)
+      await randomDelay()
+    }
+
+    console.log('[WaitingCheck] ========================================')
+    console.log('[WaitingCheck] 所有等待回复候选人检查完成')
+    console.log('[WaitingCheck] ========================================')
+  } catch (error) {
+    console.error('[WaitingCheck] 检查等待回复候选人失败:', error)
   }
 }
 

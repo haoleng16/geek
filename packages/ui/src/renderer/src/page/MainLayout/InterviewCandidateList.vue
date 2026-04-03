@@ -225,8 +225,20 @@ function handleStatsClick(status: string) {
   handleFilterChange()
 }
 
-function handleExportExcel() {
-  ElMessage.info('导出功能开发中')
+async function handleExportExcel() {
+  try {
+    const result = await electron.ipcRenderer.invoke('interview-export-candidates-excel', {
+      status: filterForm.status || undefined
+    })
+    if (result.success) {
+      ElMessage.success('已保存在桌面')
+    } else {
+      ElMessage.error(result.error || '导出失败')
+    }
+  } catch (error) {
+    console.error('导出Excel失败:', error)
+    ElMessage.error('导出失败')
+  }
 }
 
 function getStatusLabel(status: string): string {

@@ -806,13 +806,18 @@ export async function saveInterviewCandidate(
 
   if (data.id) {
     entity = await repo.findOne({ where: { id: data.id } }) || new InterviewCandidate();
-  } else if (data.encryptGeekId && data.encryptJobId) {
-    entity = await repo.findOne({
-      where: {
-        encryptGeekId: data.encryptGeekId,
-        encryptJobId: data.encryptJobId
-      }
-    }) || new InterviewCandidate();
+  } else if (data.encryptGeekId) {
+    // 如果 encryptJobId 为空，只按 encryptGeekId 查找，避免因 SQLite NULL != NULL 导致重复创建
+    if (!data.encryptJobId || data.encryptJobId === '') {
+      entity = await repo.findOne({ where: { encryptGeekId: data.encryptGeekId } }) || new InterviewCandidate();
+    } else {
+      entity = await repo.findOne({
+        where: {
+          encryptGeekId: data.encryptGeekId,
+          encryptJobId: data.encryptJobId
+        }
+      }) || new InterviewCandidate();
+    }
   } else {
     entity = new InterviewCandidate();
   }

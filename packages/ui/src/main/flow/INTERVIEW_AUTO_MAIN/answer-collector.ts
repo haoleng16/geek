@@ -72,21 +72,28 @@ export async function getChatHistory(page: Page): Promise<any[]> {
       }
 
       // 从 DOM 获取（最后的备选方案）
-      const messageEls = chatConversation?.querySelectorAll('[class*="message"], [class*="msg"], [class*="chat-item"]')
+      // 【修复】优先使用 .message-item 选择器，并精确获取消息文本
+      const messageEls = chatConversation?.querySelectorAll('.message-item, [class*="message-item"], [class*="msg-item"]')
       if (messageEls && messageEls.length > 0) {
         console.log('[AnswerCollector] 使用 DOM 方式获取消息')
-        return [...messageEls].map(el => ({
-          text: el.textContent || '',
-          // 【修复】增强 DOM 方式的 isSelf 判断
-          isSelf: el.classList.contains('self') ||
-                  el.classList.contains('is-self') ||
-                  !!el.closest('[class*="self"]') ||
-                  !!el.closest('[class*="my-message"]') ||
-                  el.classList.contains('mine') ||
-                  el.getAttribute('data-self') === 'true',
-          className: el.className,
-          _source: 'dom'
-        }))
+        return [...messageEls].map(el => {
+          // 【修复】使用 .message-text 选择器精确获取消息文本
+          // 避免获取到时间戳（如 "03-18 23:25"）、日期分隔（如 "3月18日"）、职位信息等元数据
+          const textEl = el.querySelector('.message-text')
+          const text = textEl?.textContent?.trim() || ''
+          return {
+            text,
+            // 【修复】增强 DOM 方式的 isSelf 判断
+            isSelf: el.classList.contains('self') ||
+                    el.classList.contains('is-self') ||
+                    !!el.closest('[class*="self"]') ||
+                    !!el.closest('[class*="my-message"]') ||
+                    el.classList.contains('mine') ||
+                    el.getAttribute('data-self') === 'true',
+            className: el.className,
+            _source: 'dom'
+          }
+        }).filter(msg => msg.text) // 过滤掉空消息
       }
 
       return []
@@ -119,6 +126,7 @@ export async function getChatHistory(page: Page): Promise<any[]> {
 /**
  * 对消息列表进行去重
  * 使用消息文本内容作为去重依据
+ * 【改进】使用更稳定的去重键，避免因时间格式差异导致重复
  */
 function deduplicateMessages(messages: any[]): any[] {
   const seen = new Set<string>()
@@ -127,8 +135,11 @@ function deduplicateMessages(messages: any[]): any[] {
   for (const msg of messages) {
     const text = msg.text || msg.content || msg.message || ''
     const time = msg.time || ''
-    // 使用 文本+时间 作为唯一标识
-    const key = `${text.trim()}_${time}`
+    const sender = msg.sender || msg.from || ''
+
+    // 【改进】优先使用消息ID，否则使用文本前50字符+时间+发送者作为唯一标识
+    // 这样可以避免因时间格式差异或空白字符差异导致的去重失败
+    const key = msg.id || `${text.trim().slice(0, 50)}_${time}_${sender}`
 
     if (!seen.has(key) && text.trim()) {
       seen.add(key)
@@ -137,6 +148,248 @@ function deduplicateMessages(messages: any[]): any[] {
   }
 
   return result
+}
+
+/**
+ * 【新增】对回答文本内部的重复句子进行去重
+ * 将文本按句子分割，去除完全相同的重复句子
+ * @param text 回答文本
+ * @returns 去重后的文本
+ */
+export function deduplicateSentencesInText(text: string): string {
+  if (!text || !text.trim()) return ''
+
+  // 按换行分割（每行可能包含一个或多个句子）
+  const lines = text.split(/\n+/).filter(line => line.trim())
+
+  // 对每行进行句子分割
+  // 中文句子通常以 。！？；结尾，英文以 . ! ? ; 结尾
+  const sentenceEndPattern = /([。！？；.!?;]+)/g
+
+  const allSentences: string[] = []
+  for (const line of lines) {
+    // 分割句子，保留分隔符
+    const parts = line.split(sentenceEndPattern)
+    let currentSentence = ''
+    for (let i = 0; i < parts.length; i++) {
+      currentSentence += parts[i]
+      // 如果当前部分是分隔符，或者到达末尾，则形成一个完整句子
+      if (sentenceEndPattern.test(parts[i]) || i === parts.length - 1) {
+        if (currentSentence.trim()) {
+          allSentences.push(currentSentence.trim())
+        }
+        currentSentence = ''
+      }
+    }
+  }
+
+  // 去重：使用 Set 去除完全相同的句子
+  const seen = new Set<string>()
+  const uniqueSentences: string[] = []
+
+  for (const sentence of allSentences) {
+    // 标准化比较：去除多余空格
+    const normalized = sentence.replace(/\s+/g, ' ').trim()
+    if (!seen.has(normalized) && normalized) {
+      seen.add(normalized)
+      uniqueSentences.push(sentence)
+    } else if (seen.has(normalized)) {
+      console.log(`[AnswerCollector] 去重重复句子: "${normalized.substring(0, 50)}..."`)
+    }
+  }
+
+  // 合并去重后的句子
+  // 尝试保持原有的段落结构（连续句子合并为一行）
+  const result = uniqueSentences.join('\n')
+
+  if (allSentences.length !== uniqueSentences.length) {
+    console.log(`[AnswerCollector] 句子去重: 原始 ${allSentences.length} 句 -> 去重后 ${uniqueSentences.length} 句`)
+  }
+
+  return result
+}
+
+/**
+ * 【新增】检查回答是否与已有记录重复
+ * 对同一候选人的同一轮次，检查回答内容是否与之前保存的回答完全相同
+ * @param ds DataSource
+ * @param candidateId 候选人ID
+ * @param roundNumber 轮次
+ * @param answerText 待检查的回答文本
+ * @returns 如果重复返回 true，否则返回 false
+ */
+export async function isDuplicateAnswer(
+  ds: DataSource,
+  candidateId: number,
+  roundNumber: number,
+  answerText: string
+): Promise<boolean> {
+  if (!answerText || !answerText.trim()) return false
+
+  try {
+    const qaRecords = await getInterviewQaRecordList(ds, candidateId)
+
+    // 查找同一轮次的记录
+    const sameRoundRecord = qaRecords.find(r => r.roundNumber === roundNumber)
+
+    if (sameRoundRecord && sameRoundRecord.answerText) {
+      // 标准化比较：去除多余空格和换行
+      const normalizedExisting = sameRoundRecord.answerText.replace(/\s+/g, ' ').trim()
+      const normalizedNew = answerText.replace(/\s+/g, ' ').trim()
+
+      if (normalizedExisting === normalizedNew) {
+        console.log(`[AnswerCollector] 检测到重复回答: 候选人 ${candidateId} 轮次 ${roundNumber}`)
+        return true
+      }
+    }
+
+    return false
+  } catch (error) {
+    console.error('[AnswerCollector] 检查重复回答失败:', error)
+    return false
+  }
+}
+
+/**
+ * 【新增】无关内容过滤模式
+ * 用于过滤候选人回答中的问候语、自我介绍等无关内容
+ */
+const IRRELEVANT_PATTERNS = [
+  // 问候语
+  /^您好[，。!]?$/,
+  /^你好[，。!]?$/,
+  /^嗨[，。!]?$/,
+  /^哈喽[，。!]?$/,
+  /^谢谢[，。!]?$/,
+  /^感谢[，。!]?$/,
+  /^好的[，。!]?$/,
+  /^收到[，。!]?$/,
+  /^明白了[，。!]?$/,
+  /^了解[，。!]?$/,
+  /^没问题[，。!]?$/,
+  /^可以的[，。!]?$/,
+  /^OK[，。!]?$/i,
+  /^okay[，。!]?$/i,
+
+  // 简短回复（通常不是实质性回答）
+  /^是的[，。!]?$/,
+  /^不是[，。!]?$/,
+  /^有[，。!]?$/,
+  /^没有[，。!]?$/,
+  /^对[，。!]?$/,
+  /^嗯[，。!]?$/,
+  /^噢[，。!]?$/,
+  /^啊[，。!]?$/,
+
+  // 自我介绍开头（通常不需要包含在回答中）
+  /^我是.*应聘/,
+  /^我叫.*应聘/,
+  /^我之前在/,
+  /^本人.*从事/,
+  /^自我介绍/,
+]
+
+/**
+ * 【新增】过滤回答中的无关内容
+ * @param answerText 原始回答文本
+ * @returns 过滤后的回答文本
+ */
+export function filterIrrelevantContent(answerText: string): string {
+  if (!answerText || !answerText.trim()) return ''
+
+  // 按行分割
+  const lines = answerText.split(/\n+/).filter(line => line.trim())
+
+  // 过滤掉无关行
+  const filteredLines = lines.filter(line => {
+    const trimmed = line.trim()
+
+    // 检查是否匹配无关模式
+    for (const pattern of IRRELEVANT_PATTERNS) {
+      if (pattern.test(trimmed)) {
+        console.log(`[AnswerCollector] 过滤无关内容: "${trimmed}"`)
+        return false
+      }
+    }
+
+    // 过滤过短的内容（少于5个字符且不含实质信息）
+    if (trimmed.length < 5 && !trimmed.includes('经验') && !trimmed.includes('项目')) {
+      return false
+    }
+
+    return true
+  })
+
+  return filteredLines.join('\n').trim()
+}
+
+/**
+ * 【新增】格式化问答记录用于展示
+ * 实现读取时过滤逻辑：
+ * 1. 格式为「问题：回答」
+ * 2. 最多保留3条问答
+ * 3. 过滤掉候选人介绍等无关内容
+ * @param qaRecords 原始问答记录列表
+ * @param maxRecords 最大保留记录数（默认3）
+ * @returns 格式化后的问答记录列表
+ */
+export function formatQaRecordsForDisplay(
+  qaRecords: any[],
+  maxRecords: number = 3
+): any[] {
+  if (!qaRecords || qaRecords.length === 0) return []
+
+  // 按轮次排序
+  const sortedRecords = [...qaRecords].sort((a, b) => a.roundNumber - b.roundNumber)
+
+  // 过滤并格式化每条记录
+  const formattedRecords = sortedRecords.map(record => {
+    // 过滤无关内容
+    const filteredAnswer = filterIrrelevantContent(record.answerText || '')
+
+    return {
+      ...record,
+      // 格式化：确保有实质内容
+      questionText: record.questionText?.trim() || '（问题未记录）',
+      answerText: filteredAnswer || '（未回答或回答无实质内容）',
+      // 标记是否有实质回答
+      hasSubstantiveAnswer: filteredAnswer.length > 10
+    }
+  })
+
+  // 只保留有实质问答的记录，最多 maxRecords 条
+  const substantiveRecords = formattedRecords.filter(r => r.hasSubstantiveAnswer)
+  const limitedRecords = substantiveRecords.slice(0, maxRecords)
+
+  // 如果没有实质问答，返回第一条记录（即使是空的）
+  if (limitedRecords.length === 0 && formattedRecords.length > 0) {
+    return [formattedRecords[0]]
+  }
+
+  console.log(`[AnswerCollector] 格式化问答记录: 原始 ${qaRecords.length} 条 -> 有实质内容 ${substantiveRecords.length} 条 -> 展示 ${limitedRecords.length} 条`)
+
+  return limitedRecords
+}
+
+/**
+ * 【新增】生成问答展示文本
+ * 用于导出或简单展示场景
+ * @param qaRecords 问答记录列表
+ * @returns 格式化的文本，如 "第1轮\n问题：xxx\n回答：xxx\n\n第2轮..."
+ */
+export function generateQaDisplayText(qaRecords: any[]): string {
+  const formattedRecords = formatQaRecordsForDisplay(qaRecords)
+
+  if (formattedRecords.length === 0) return '暂无问答记录'
+
+  return formattedRecords.map(record => {
+    const roundLabel = `第${record.roundNumber}轮`
+    const question = `问题：${record.questionText}`
+    const answer = `回答：${record.answerText}`
+    const score = record.totalScore ? `得分：${record.totalScore}分` : ''
+
+    return [roundLabel, question, answer, score].filter(Boolean).join('\n')
+  }).join('\n\n')
 }
 
 /**
@@ -348,7 +601,7 @@ function textLooksLikeQuestion(text: string): boolean {
 
 /**
  * 【新增】清理候选人的回答文本
- * 移除被错误混入的问题内容
+ * 移除被错误混入的问题内容，并去除重复句子
  */
 export function cleanCandidateAnswer(rawText: string): string {
   if (!rawText) return ''
@@ -370,10 +623,15 @@ export function cleanCandidateAnswer(rawText: string): string {
     return true
   })
 
+  // 合并成文本
   const cleaned = answerLines.join('\n').trim()
-  console.log(`[AnswerCollector] 清理回答: 原始${rawText.length}字符 -> 清理后${cleaned.length}字符`)
 
-  return cleaned
+  // 【新增】对回答文本内部的重复句子进行去重
+  const deduplicated = deduplicateSentencesInText(cleaned)
+
+  console.log(`[AnswerCollector] 清理回答: 原始${rawText.length}字符 -> 清理后${cleaned.length}字符 -> 去重后${deduplicated.length}字符`)
+
+  return deduplicated
 }
 
 /**

@@ -61,6 +61,7 @@ import { AddLastScoredAtToInterviewCandidate1800000000000 } from "./migrations/1
 import { AddQaRecordUniqueConstraint1800000000001 } from "./migrations/1800000000001-AddQaRecordUniqueConstraint";
 import { AddEducationFieldsToInterviewCandidate1800000000002 } from "./migrations/1800000000002-AddEducationFieldsToInterviewCandidate";
 import { AddNegationWordsToInterviewQuestionRound1800000000003 } from "./migrations/1800000000003-AddNegationWordsToInterviewQuestionRound";
+import { CleanDuplicateAnswerContent1800000000004 } from "./migrations/1800000000004-CleanDuplicateAnswerContent";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -122,7 +123,8 @@ export function initDb(dbFilePath) {
       AddLastScoredAtToInterviewCandidate1800000000000,
       AddQaRecordUniqueConstraint1800000000001,
       AddEducationFieldsToInterviewCandidate1800000000002,
-      AddNegationWordsToInterviewQuestionRound1800000000003
+      AddNegationWordsToInterviewQuestionRound1800000000003,
+      CleanDuplicateAnswerContent1800000000004
     ],
     migrationsRun: true
   });
