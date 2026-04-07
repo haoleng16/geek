@@ -13,7 +13,6 @@ import {
   deleteInterviewJobPosition,
   saveInterviewQuestionRound,
   deleteInterviewQuestionRound,
-  saveInterviewScoreRule,
   getInterviewCandidateList,
   getInterviewCandidate,
   saveInterviewCandidate,
@@ -106,16 +105,6 @@ export function initInterviewIpcHandlers(ds: DataSource) {
         for (const round of data.questionRounds) {
           await saveInterviewQuestionRound(dataSource, {
             ...round,
-            jobPositionId: result.id
-          })
-        }
-      }
-
-      // 保存评分规则
-      if (data.scoreRules) {
-        for (const rule of data.scoreRules) {
-          await saveInterviewScoreRule(dataSource, {
-            ...rule,
             jobPositionId: result.id
           })
         }

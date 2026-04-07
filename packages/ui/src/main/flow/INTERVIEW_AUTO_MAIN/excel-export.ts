@@ -69,8 +69,6 @@ export async function exportCandidatesToExcel(
     { header: '专业', key: 'major', width: 15 },
     { header: '当前轮次', key: 'currentRound', width: 10 },
     { header: '总得分', key: 'totalScore', width: 10 },
-    { header: '关键词得分', key: 'keywordScore', width: 12 },
-    { header: 'AI得分', key: 'llmScore', width: 10 },
     { header: '评分理由', key: 'llmReason', width: 40 },
     { header: '创建时间', key: 'createdAt', width: 18 },
     { header: '更新时间', key: 'updatedAt', width: 18 }
@@ -95,8 +93,6 @@ export async function exportCandidatesToExcel(
       major: formatValue(candidate.major),
       currentRound: candidate.currentRound > 0 ? `第${candidate.currentRound}轮` : '-',
       totalScore: formatValue(candidate.totalScore),
-      keywordScore: formatValue(candidate.keywordScore),
-      llmScore: formatValue(candidate.llmScore),
       llmReason: formatValue(candidate.llmReason),
       createdAt: formatDate(candidate.createdAt),
       updatedAt: formatDate(candidate.updatedAt)

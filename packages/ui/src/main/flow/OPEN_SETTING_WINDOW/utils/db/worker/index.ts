@@ -3,12 +3,6 @@ import { parentPort } from 'node:worker_threads'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
 import { type DataSource } from 'typeorm'
 import { getPublicDbFilePath } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
-import { VChatStartupLog } from '@geekgeekrun/sqlite-plugin/dist/entity/VChatStartupLog'
-import { VJobLibrary } from '@geekgeekrun/sqlite-plugin/dist/entity/VJobLibrary'
-import { VMarkAsNotSuitLog } from '@geekgeekrun/sqlite-plugin/dist/entity/VMarkAsNotSuitLog'
-import { measureExecutionTime } from '../../../../../../common/utils/performance'
-import { PageReq, PagedRes } from '../../../../../../common/types/pagination'
-import { JobInfoChangeLog } from '@geekgeekrun/sqlite-plugin/dist/entity/JobInfoChangeLog'
 import { AutoStartChatRunRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/AutoStartChatRunRecord'
 import { RecruiterJobConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/RecruiterJobConfig'
 import { CandidateConversation } from '@geekgeekrun/sqlite-plugin/dist/entity/CandidateConversation'
@@ -19,7 +13,6 @@ import { RecruiterContactedCandidate } from '@geekgeekrun/sqlite-plugin/dist/ent
 import { SmartReplyRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/SmartReplyRecord'
 import { InterviewJobPosition } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewJobPosition'
 import { InterviewQuestionRound } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewQuestionRound'
-import { InterviewScoreRule } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewScoreRule'
 import { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewCandidate'
 import { InterviewQaRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewQaRecord'
 import { InterviewResume } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewResume'
@@ -46,89 +39,6 @@ dbInitPromise.then(
 )
 
 const payloadHandler = {
-  async getAutoStartChatRecord({ pageNo, pageSize }: Partial<PageReq> = {}): Promise<
-    PagedRes<VChatStartupLog>
-  > {
-    if (!pageNo) {
-      pageNo = 1
-    }
-    if (!pageSize) {
-      pageSize = 10
-    }
-
-    const userRepository = dataSource!.getRepository(VChatStartupLog)!
-    const [data, totalItemCount] = await measureExecutionTime(
-      userRepository.findAndCount({
-        skip: (pageNo - 1) * pageSize,
-        take: pageSize,
-        order: {
-          date: 'DESC'
-        }
-      })
-    )
-    return {
-      data,
-      pageNo,
-      totalItemCount
-    }
-  },
-  async getMarkAsNotSuitRecord({ pageNo, pageSize }: Partial<PageReq> = {}): Promise<
-    PagedRes<VMarkAsNotSuitLog>
-  > {
-    if (!pageNo) {
-      pageNo = 1
-    }
-    if (!pageSize) {
-      pageSize = 10
-    }
-    const recordRepository = dataSource!.getRepository(VMarkAsNotSuitLog)!
-    const [data, totalItemCount] = await measureExecutionTime(
-      recordRepository.findAndCount({
-        skip: (pageNo - 1) * pageSize,
-        take: pageSize,
-        order: {
-          date: 'DESC'
-        }
-      })
-    )
-    return {
-      data,
-      pageNo,
-      totalItemCount
-    }
-  },
-  async getJobLibrary({ pageNo, pageSize }: Partial<PageReq> = {}): Promise<PagedRes<VJobLibrary>> {
-    if (!pageNo) {
-      pageNo = 1
-    }
-    if (!pageSize) {
-      pageSize = 10
-    }
-
-    const userRepository = dataSource!.getRepository(VJobLibrary)!
-    const [data, totalItemCount] = await measureExecutionTime(
-      userRepository.findAndCount({
-        skip: (pageNo - 1) * pageSize,
-        take: pageSize
-      })
-    )
-    return {
-      data,
-      pageNo,
-      totalItemCount
-    }
-  },
-  async getJobHistoryByEncryptId({ encryptJobId }): Promise<JobInfoChangeLog[]> {
-    const jobInfoChangeLogRepository = dataSource!.getRepository(JobInfoChangeLog)!
-    const data = await measureExecutionTime(
-      jobInfoChangeLogRepository.find({
-        where: {
-          encryptJobId
-        }
-      })
-    )
-    return data
-  },
   async saveAndGetCurrentRunRecord() {
     const autoStartChatRunRecord = new AutoStartChatRunRecord()
     autoStartChatRunRecord.date = new Date()
@@ -497,7 +407,6 @@ const payloadHandler = {
   async getInterviewJobPositionWithDetails({ id }): Promise<any> {
     const repo = dataSource!.getRepository(InterviewJobPosition)
     const questionRoundRepo = dataSource!.getRepository(InterviewQuestionRound)
-    const scoreRuleRepo = dataSource!.getRepository(InterviewScoreRule)
 
     const jobPosition = await repo.findOne({ where: { id } })
     if (!jobPosition) return null
@@ -507,11 +416,7 @@ const payloadHandler = {
       order: { roundNumber: 'ASC' }
     })
 
-    const scoreRules = await scoreRuleRepo.find({
-      where: { jobPositionId: id }
-    })
-
-    return { ...jobPosition, questionRounds, scoreRules }
+    return { ...jobPosition, questionRounds }
   },
   async saveInterviewJobPosition(data: Partial<InterviewJobPosition>): Promise<InterviewJobPosition> {
     const repo = dataSource!.getRepository(InterviewJobPosition)
@@ -546,19 +451,6 @@ const payloadHandler = {
   async deleteInterviewQuestionRound({ id }): Promise<void> {
     const repo = dataSource!.getRepository(InterviewQuestionRound)
     await repo.delete(id)
-  },
-  async saveInterviewScoreRule(data: Partial<InterviewScoreRule>): Promise<InterviewScoreRule> {
-    const repo = dataSource!.getRepository(InterviewScoreRule)
-    let entity: InterviewScoreRule
-
-    if (data.id) {
-      entity = await repo.findOne({ where: { id: data.id } }) || new InterviewScoreRule()
-    } else {
-      entity = new InterviewScoreRule()
-    }
-
-    Object.assign(entity, data)
-    return await repo.save(entity)
   },
   async getInterviewCandidateList(params: {
     status?: string

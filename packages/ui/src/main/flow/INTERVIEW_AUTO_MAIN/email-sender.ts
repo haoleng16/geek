@@ -115,7 +115,7 @@ function generateEmailContent(
 第${qa.roundNumber}轮：
 问题：${qa.questionText}
 回答：${qa.answerText || '（未回答）'}
-评分：${qa.totalScore || qa.keywordScore || 0}分
+评分：${qa.totalScore || 0}分
 `
   }
 
@@ -130,9 +130,7 @@ function generateEmailContent(
 
 【评分结果】
 总评分：${candidate.totalScore || 0}/100
-- 关键词得分：${candidate.keywordScore || 0}/100
-- AI评分：${candidate.llmScore || 0}/100
-- 评分理由：${candidate.llmReason || '无'}
+评分理由：${candidate.llmReason || '无'}
 
 【问答记录】
 ${qaText}
@@ -169,8 +167,6 @@ ${qaText}
     <div class="section">
       <h3>📊 评分结果</h3>
       <p class="score">总评分：${candidate.totalScore || 0}/100</p>
-      <p>关键词得分：${candidate.keywordScore || 0}/100</p>
-      <p>AI评分：${candidate.llmScore || 0}/100</p>
       <p>评分理由：${candidate.llmReason || '无'}</p>
     </div>
 
@@ -181,7 +177,7 @@ ${qaText}
           <p><strong>第${qa.roundNumber}轮：</strong></p>
           <p><strong>问题：</strong>${qa.questionText}</p>
           <p><strong>回答：</strong>${qa.answerText || '（未回答）'}</p>
-          <p><strong>评分：</strong>${qa.totalScore || qa.keywordScore || 0}分</p>
+          <p><strong>评分：</strong>${qa.totalScore || 0}分</p>
         </div>
       `).join('')}
     </div>

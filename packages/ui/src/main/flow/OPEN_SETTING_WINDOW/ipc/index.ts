@@ -1,5 +1,4 @@
-import { ipcMain, shell, app, dialog, BrowserWindow } from 'electron'
-import path from 'path'
+import { ipcMain, app, dialog, BrowserWindow } from 'electron'
 import * as childProcess from 'node:child_process'
 import {
   readConfigFile,
@@ -12,13 +11,6 @@ import * as JSONStream from 'JSONStream'
 import { checkCookieListFormat } from '../../../../common/utils/cookie'
 import { getAnyAvailablePuppeteerExecutable } from '../../DOWNLOAD_DEPENDENCIES/utils/puppeteer-executable/index'
 import { mainWindow } from '../../../window/mainWindow'
-import {
-  getAutoStartChatRecord,
-  getJobLibrary,
-  getJobHistoryByEncryptId,
-  getMarkAsNotSuitRecord
-} from '../utils/db/index'
-import { PageReq } from '../../../../common/types/pagination'
 import { pipeWriteRegardlessError } from '../../utils/pipe'
 import { WriteStream } from 'node:fs'
 // eslint-disable-next-line vue/prefer-import-from-vue
@@ -26,24 +18,10 @@ import { hasOwn } from '@vue/shared'
 import { createLlmConfigWindow, llmConfigWindow } from '../../../window/llmConfigWindow'
 import { createResumeEditorWindow, resumeEditorWindow } from '../../../window/resumeEditorWindow'
 import {
-  getValidTemplate,
-  requestNewMessageContent
-} from '../../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
-import {
-  defaultPromptMap,
-  writeDefaultAutoRemindPrompt
-} from '../../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
-import {
   checkIsResumeContentValid,
   resumeContentEnoughDetect
 } from '../../../../common/utils/resume'
-import {
-  createReadNoReplyReminderLlmMockWindow,
-  readNoReplyReminderLlmMockWindow
-} from '../../../window/readNoReplyReminderLlmMockWindow'
-import { RequestSceneEnum } from '../../../features/llm-request-log'
 import { checkUpdateForUi } from '../../../features/updater'
-import gtag from '../../../utils/gtag'
 import { daemonEE, sendToDaemon } from '../connect-to-daemon'
 import { runCommon } from '../../../features/run-common'
 import { loginWithCookieAssistant } from '../../../features/login-with-cookie-assistant'
@@ -204,88 +182,6 @@ export default function initIpc() {
     return await Promise.all(promiseArr)
   })
 
-  ipcMain.handle('run-geek-auto-start-chat-with-boss', async (ev) => {
-    const mode = 'geekAutoStartWithBossMain'
-    const { runRecordId } = await runCommon({ mode })
-    daemonEE.on('message', function handler(message) {
-      if (message.workerId !== mode) {
-        return
-      }
-      if (message.type === 'worker-exited') {
-        mainWindow?.webContents.send('worker-exited', message)
-      }
-    })
-    return { runRecordId }
-  })
-
-  ipcMain.handle('run-read-no-reply-auto-reminder', async () => {
-    const mode = 'readNoReplyAutoReminderMain'
-    const { runRecordId } = await runCommon({ mode })
-    daemonEE.on('message', function handler(message) {
-      if (message.workerId !== mode) {
-        return
-      }
-      if (message.type === 'worker-exited') {
-        mainWindow?.webContents.send('worker-exited', message)
-      }
-    })
-    return { runRecordId }
-  })
-
-  ipcMain.handle('stop-geek-auto-start-chat-with-boss', async () => {
-    mainWindow?.webContents.send('geek-auto-start-chat-with-boss-stopping')
-    const p = new Promise((resolve) => {
-      daemonEE.on('message', function handler(message) {
-        if (message.workerId !== 'geekAutoStartWithBossMain') {
-          return
-        }
-        if (message.type === 'worker-exited') {
-          daemonEE.off('message', handler)
-          resolve(undefined)
-        }
-      })
-    })
-    await sendToDaemon(
-      {
-        type: 'stop-worker',
-        workerId: 'geekAutoStartWithBossMain'
-      },
-      {
-        needCallback: true
-      }
-    )
-
-    await p
-    mainWindow?.webContents.send('geek-auto-start-chat-with-boss-stopped')
-  })
-
-  ipcMain.handle('stop-read-no-reply-auto-reminder', async () => {
-    mainWindow?.webContents.send('read-no-reply-auto-reminder-stopping')
-    const p = new Promise((resolve) => {
-      daemonEE.on('message', function handler(message) {
-        if (message.workerId !== 'readNoReplyAutoReminderMain') {
-          return
-        }
-        if (message.type === 'worker-exited') {
-          daemonEE.off('message', handler)
-          resolve(undefined)
-        }
-      })
-    })
-    await sendToDaemon(
-      {
-        type: 'stop-worker',
-        workerId: 'readNoReplyAutoReminderMain'
-      },
-      {
-        needCallback: true
-      }
-    )
-
-    await p
-    mainWindow?.webContents.send('read-no-reply-auto-reminder-stopped')
-  })
-
   ipcMain.handle('get-task-manager-list', async () => {
     const result = await sendToDaemon(
       {
@@ -314,19 +210,6 @@ export default function initIpc() {
   ipcMain.handle('check-boss-zhipin-cookie-file', () => {
     const cookies = readStorageFile('boss-cookies.json')
     return checkCookieListFormat(cookies)
-  })
-
-  ipcMain.handle('get-auto-start-chat-record', async (ev, payload: PageReq) => {
-    const a = await getAutoStartChatRecord(payload)
-    return a
-  })
-  ipcMain.handle('get-mark-as-not-suit-record', async (ev, payload: PageReq) => {
-    const a = await getMarkAsNotSuitRecord(payload)
-    return a
-  })
-  ipcMain.handle('get-job-library', async (ev, payload: PageReq) => {
-    const a = await getJobLibrary(payload)
-    return a
   })
 
   let subProcessOfOpenBossSiteDefer: null | PromiseWithResolvers<ChildProcess> = null
@@ -419,10 +302,6 @@ export default function initIpc() {
     )
   })
 
-  ipcMain.handle('get-job-history-by-encrypt-id', async (_, encryptJobId) => {
-    return await getJobHistoryByEncryptId(encryptJobId)
-  })
-
   ipcMain.handle('llm-config', async () => {
     createLlmConfigWindow({
       parent: mainWindow!,
@@ -475,20 +354,7 @@ export default function initIpc() {
     const res = (await readConfigFile('resumes.json'))?.[0]
     return res?.content ?? null
   })
-  ipcMain.on('no-reply-reminder-prompt-edit', async (_, { type }) => {
-    const template = await readStorageFile(defaultPromptMap[type].fileName, {
-      isJson: false
-    })
-    if (!template) {
-      await writeDefaultAutoRemindPrompt({ type })
-    }
-    const filePath = path.join(storageFilePath, defaultPromptMap[type].fileName)
-    shell.openPath(filePath)
-  })
   ipcMain.on('close-resume-editor', () => resumeEditorWindow?.close())
-  ipcMain.handle('check-if-auto-remind-prompt-valid', async (_, { type }) => {
-    await getValidTemplate({ type })
-  })
   ipcMain.handle('check-is-resume-content-valid', async () => {
     const res = (await readConfigFile('resumes.json'))?.[0]
     return checkIsResumeContentValid(res)
@@ -496,9 +362,6 @@ export default function initIpc() {
   ipcMain.handle('resume-content-enough-detect', async () => {
     const res = (await readConfigFile('resumes.json'))?.[0]
     return resumeContentEnoughDetect(res)
-  })
-  ipcMain.handle('overwrite-auto-remind-prompt-with-default', async (_, { type }) => {
-    await writeDefaultAutoRemindPrompt({ type })
   })
   ipcMain.handle('check-if-llm-config-list-valid', async () => {
     const llmConfigList = await readConfigFile('llm.json')
@@ -514,39 +377,6 @@ export default function initIpc() {
         throw new Error('CANNOT_FIND_VALID_CONFIG')
       }
     }
-  })
-  ipcMain.on('test-llm-config-effect', (_, { autoReminderConfig } = {}) => {
-    createReadNoReplyReminderLlmMockWindow(
-      {
-        parent: mainWindow!,
-        modal: true,
-        show: true
-      },
-      {
-        autoReminderConfig
-      }
-    )
-    async function requestLlm(_, requestPayload) {
-      return await requestNewMessageContent(requestPayload.messageList, {
-        requestScene: RequestSceneEnum.testing,
-        llmConfigIdForPick: requestPayload.llmConfigIdForPick ?? null
-      })
-    }
-    ipcMain.handle('request-llm-for-test', requestLlm)
-    readNoReplyReminderLlmMockWindow?.once('closed', () => {
-      ipcMain.removeHandler('request-llm-for-test')
-    })
-    async function getLlmConfigList() {
-      return await readConfigFile('llm.json')
-    }
-    ipcMain.handle('get-llm-config-for-test', getLlmConfigList)
-    readNoReplyReminderLlmMockWindow?.once('closed', () => {
-      ipcMain.removeHandler('get-llm-config-for-test')
-    })
-  })
-  ipcMain.on('close-read-no-reply-reminder-llm-mock-window', () => {
-    readNoReplyReminderLlmMockWindow?.close()
-    gtag('mock_chat_window_closed')
   })
   ipcMain.handle('check-update', async () => {
     const newRelease = await checkUpdateForUi()

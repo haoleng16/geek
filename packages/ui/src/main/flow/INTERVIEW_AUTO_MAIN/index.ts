@@ -31,7 +31,7 @@ import { sendMessage } from '../boss-chat-utils'
 // 导入面试模块
 import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
 import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest, sendRejectionMessage } from './question-sender'
-import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, isLatestMessageFromCandidate, deduplicateSentencesInText, isDuplicateAnswer } from './answer-collector'
+import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, deduplicateSentencesInText, isDuplicateAnswer } from './answer-collector'
 import { scoreAnswer, saveScoreResult } from './scorer'
 import { detectResumeSent, downloadResume, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
 import { sendResumeEmail, startEmailScheduler, getCandidatesByStatus } from './email-sender'
@@ -457,13 +457,6 @@ async function handleCandidateByStatus(
         }
       }
 
-      // 检查最新消息是否来自候选人
-      const isFromCandidate = await isLatestMessageFromCandidate(page)
-      if (!isFromCandidate) {
-        console.log('[Interview MainLoop] 最新消息不是候选人发送的，跳过')
-        break
-      }
-
       // 【关键修复2】检查问答记录是否已评分，避免重复评分
       const qaRepoCheck = ds.getRepository('InterviewQaRecord')
       const existingQARecord = await qaRepoCheck.findOne({
@@ -501,14 +494,13 @@ async function handleCandidateByStatus(
         break
       }
 
-      // 评分（使用新的评分逻辑）
+      // 评分（使用纯LLM评分）
       const scoreResult = await scoreAnswer(
         ds,
         candidate,
         questionRound.questionText,
         mergedText,
-        questionRound,
-        jobPosition.passThreshold
+        jobPosition
       )
 
       // 保存问答记录（含评分）- 复用之前的查询结果 existingQARecord
@@ -519,11 +511,9 @@ async function handleCandidateByStatus(
         await qaRepo.update(existingQARecord.id!, {
           answerText: mergedText,
           answeredAt: new Date(),
-          keywordScore: scoreResult.keywordScore,
           llmScore: scoreResult.llmScore,
           totalScore: scoreResult.totalScore,
           llmReason: scoreResult.llmReason,
-          matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
           scoredAt: new Date()
         })
       } else {
@@ -535,11 +525,9 @@ async function handleCandidateByStatus(
           answerText: mergedText,
           answeredAt: new Date(),
           questionSentAt: candidate.lastQuestionAt,
-          keywordScore: scoreResult.keywordScore,
           llmScore: scoreResult.llmScore,
           totalScore: scoreResult.totalScore,
           llmReason: scoreResult.llmReason,
-          matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
           scoredAt: new Date()
         }))
       }
@@ -548,8 +536,6 @@ async function handleCandidateByStatus(
       const candRepo = ds.getRepository('InterviewCandidate')
       await candRepo.update(candidate.id!, {
         totalScore: scoreResult.totalScore,
-        keywordScore: scoreResult.keywordScore,
-        llmScore: scoreResult.llmScore,
         llmReason: scoreResult.llmReason,
         lastReplyAt: new Date(),
         lastScoredAt: new Date()  // 记录已评分时间，避免重复评分

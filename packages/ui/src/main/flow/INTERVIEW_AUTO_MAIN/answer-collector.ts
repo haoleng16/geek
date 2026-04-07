@@ -18,12 +18,12 @@ export interface CandidateAnswer {
 
 /**
  * 获取聊天历史消息
- * 【修复】使用与 READ_NO_REPLY_AUTO_REMINDER_MAIN 相同的选择器，确保 isSelf 字段正确
+ * 通过 Vue 组件获取聊天记录，确保 isSelf 字段正确
  */
 export async function getChatHistory(page: Page): Promise<any[]> {
   try {
     const historyMessageList = await page.evaluate(() => {
-      // 【关键修复】优先使用与 READ_NO_REPLY_AUTO_REMINDER_MAIN 相同的选择器
+      // 优先从 Vue 组件获取消息列表
       // 这个选择器返回的消息对象包含正确的 isSelf 字段
       const chatRecordVue = document.querySelector('.message-content .chat-record')?.__vue__
       if (chatRecordVue?.list$ && Array.isArray(chatRecordVue.list$)) {
@@ -688,9 +688,10 @@ export async function mergeMessagesInWindow(
       })
       .filter(msg => {
         // 只取发送问题后的消息
+        // 【修复】如果 lastQuestionAt 为空，说明数据不完整，不过滤时间，直接取最近的候选人消息
         if (!candidate.lastQuestionAt) {
-          console.log('[AnswerCollector] lastQuestionAt 为空，跳过该消息')
-          return false
+          console.log('[AnswerCollector] lastQuestionAt 为空，不过滤时间，取最近的候选人消息')
+          return true
         }
         const msgTime = msg.time ? new Date(msg.time) : new Date()
         const questionTime = new Date(candidate.lastQuestionAt)

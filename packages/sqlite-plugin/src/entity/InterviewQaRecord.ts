@@ -32,23 +32,16 @@ export class InterviewQaRecord {
   answeredAt: Date;                  // 回复时间
 
   @Column({ nullable: true, type: 'decimal', precision: 5, scale: 2 })
-  keywordScore: number;              // 关键词得分
-
-  @Column({ nullable: true, type: 'decimal', precision: 5, scale: 2 })
   llmScore: number;                  // LLM得分
 
   @Column({ nullable: true, type: 'text' })
   llmReason: string;                 // LLM评分理由
 
-  // 新增：总得分
+  // 总得分（纯LLM评分后等于llmScore）
   @Column({ nullable: true, type: 'decimal', precision: 5, scale: 2 })
-  totalScore: number;                // 总得分 = 关键词分 × 0.7 + LLM分 × 0.3
+  totalScore: number;                // 总得分
 
-  // 新增：匹配到的关键词（JSON数组）
-  @Column({ nullable: true, type: 'text' })
-  matchedKeywords: string;           // 格式: ["redis", "cache"]
-
-  // 新增：评分时间
+  // 评分时间
   @Column({ nullable: true, type: 'datetime' })
   scoredAt: Date;                    // 评分完成时间
 

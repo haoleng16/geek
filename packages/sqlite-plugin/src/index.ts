@@ -28,7 +28,6 @@ import { RecruiterContactedCandidate } from './entity/RecruiterContactedCandidat
 import { SmartReplyRecord } from './entity/SmartReplyRecord'
 import { InterviewJobPosition } from './entity/InterviewJobPosition'
 import { InterviewQuestionRound } from './entity/InterviewQuestionRound'
-import { InterviewScoreRule } from './entity/InterviewScoreRule'
 import { InterviewCandidate } from './entity/InterviewCandidate'
 import { InterviewQaRecord } from './entity/InterviewQaRecord'
 import { InterviewResume } from './entity/InterviewResume'
@@ -63,6 +62,7 @@ import { AddEducationFieldsToInterviewCandidate1800000000002 } from "./migration
 import { AddNegationWordsToInterviewQuestionRound1800000000003 } from "./migrations/1800000000003-AddNegationWordsToInterviewQuestionRound";
 import { CleanDuplicateAnswerContent1800000000004 } from "./migrations/1800000000004-CleanDuplicateAnswerContent";
 import { AddFilterFieldsToInterviewJobPosition1800000000005 } from "./migrations/1800000000005-AddFilterFieldsToInterviewJobPosition";
+import { PureLlmScoring1800000000006 } from "./migrations/1800000000006-PureLlmScoring";
 import chunk from 'lodash/chunk'
 import * as typeorm from 'typeorm'
 
@@ -102,7 +102,6 @@ export function initDb(dbFilePath) {
       SmartReplyRecord,
       InterviewJobPosition,
       InterviewQuestionRound,
-      InterviewScoreRule,
       InterviewCandidate,
       InterviewQaRecord,
       InterviewResume,
@@ -126,7 +125,8 @@ export function initDb(dbFilePath) {
       AddEducationFieldsToInterviewCandidate1800000000002,
       AddNegationWordsToInterviewQuestionRound1800000000003,
       CleanDuplicateAnswerContent1800000000004,
-      AddFilterFieldsToInterviewJobPosition1800000000005
+      AddFilterFieldsToInterviewJobPosition1800000000005,
+      PureLlmScoring1800000000006
     ],
     migrationsRun: true
   });

@@ -13,7 +13,7 @@ import type { DataSource } from 'typeorm'
 import { app, dialog } from 'electron'
 import { getLastUsedAndAvailableBrowser } from '../DOWNLOAD_DEPENDENCIES/utils/browser-history'
 import { configWithBrowserAssistant } from '../../features/config-with-browser-assistant'
-import type { ChatListItem } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/types'
+import type { ChatListItem } from '../boss-chat-utils'
 import { setDomainLocalStorage } from '@geekgeekrun/utils/puppeteer/local-storage.mjs'
 import { initPuppeteer } from '@geekgeekrun/geek-auto-start-chat-with-boss/index.mjs'
 import { scoreAnswer, saveScoreResult } from './scorer'
@@ -155,17 +155,15 @@ interface QuestionRound {
   id: number
   roundNumber: number
   questionText: string
-  keywords: string              // JSON格式关键词配置
-  llmPrompt: string             // 自定义LLM评分提示词
 }
 
 interface JobPosition {
   id: number
   name: string
-  description: string
   passThreshold: number
   isActive: boolean
-  resumeInviteText: string      // 简历邀约话术
+  llmScoringPrompt: string       // LLM评分提示词（岗位级别）
+  resumeInviteText: string       // 简历邀约话术
   questionRounds: QuestionRound[]
 }
 
@@ -178,6 +176,11 @@ interface Candidate {
   jobPositionId: number | null
   status: string
   currentRound: number
+  lastQuestionAt?: Date | null     // 最后发送问题时间
+  lastScoredAt?: Date | null       // 最后评分时间
+  lastReplyAt?: Date | null        // 最后回复时间
+  totalScore?: number | null       // 总得分
+  llmReason?: string | null        // LLM评分理由
 }
 
 // 从数据库获取岗位配置列表
@@ -242,17 +245,39 @@ async function saveCandidate(ds: DataSource, data: Partial<Candidate>): Promise<
   return await repo.save(entity) as Candidate
 }
 
-// 保存问答记录
+// 保存问答记录（避免重复）
 async function saveQaRecord(ds: DataSource, data: {
   candidateId: number
   roundNumber: number
   questionText: string
 }): Promise<void> {
-  const repo = ds.getRepository('InterviewQaRecord')
-  await repo.save(repo.create({
+  const qaRepo = ds.getRepository('InterviewQaRecord')
+
+  // 【修复】先查询是否已存在该轮次的记录
+  const existing = await qaRepo.findOne({
+    where: { candidateId: data.candidateId, roundNumber: data.roundNumber }
+  })
+
+  if (existing) {
+    // 已存在，只更新问题发送时间（如果需要）
+    console.log(`[Interview ManualTest] 第${data.roundNumber}轮问答记录已存在(id=${existing.id})，跳过创建`)
+    // 如果问题文本不同，更新问题文本
+    if (existing.questionText !== data.questionText) {
+      await qaRepo.update(existing.id!, {
+        questionText: data.questionText,
+        questionSentAt: new Date()
+      })
+      console.log(`[Interview ManualTest] 已更新第${data.roundNumber}轮问题文本`)
+    }
+    return
+  }
+
+  // 不存在，创建新记录
+  await qaRepo.save(qaRepo.create({
     ...data,
     questionSentAt: new Date()
   }))
+  console.log(`[Interview ManualTest] 创建第${data.roundNumber}轮问答记录`)
 }
 
 // 根据岗位名称匹配
@@ -946,17 +971,31 @@ export async function runManualTest() {
 
         // 获取候选人详细信息 - 优先使用从聊天列表获取的数据
         const geekInfo = await getFullGeekInfo(page)
-        // 优先使用从聊天列表获取的信息（targetChat），而不是右侧聊天区域（geekInfo）
-        // 因为右侧聊天区域可能还没刷新完成
-        const encryptGeekId = (targetChat as any).encryptGeekId || geekInfo?.encryptGeekId || ''
-        const geekName = targetChat.name || geekInfo?.name || ''
-        const encryptJobId = (targetChat as any).encryptJobId || geekInfo?.encryptJobId || ''
-        const jobName = (targetChat as any).jobName || geekInfo?.jobName || ''
+
+        // 【修复】优先使用从聊天列表获取的信息（targetChat）
+        let encryptGeekId = (targetChat as any).encryptGeekId || geekInfo?.encryptGeekId || ''
+        let geekName = targetChat.name || geekInfo?.name || ''
+        let encryptJobId = (targetChat as any).encryptJobId || geekInfo?.encryptJobId || ''
+        let jobName = (targetChat as any).jobName || geekInfo?.jobName || ''
+
+        // 【修复】如果 encryptJobId 为空，尝试从 URL 参数获取
+        if (!encryptJobId) {
+          try {
+            const urlParams = new URL(page.url())
+            const jobIdFromUrl = urlParams.searchParams.get('jobId') || urlParams.searchParams.get('encryptJobId')
+            if (jobIdFromUrl) {
+              encryptJobId = jobIdFromUrl
+              console.log('[Interview ManualTest] 从URL获取到 encryptJobId:', encryptJobId.substring(0, 10))
+            }
+          } catch (urlErr) {
+            console.log('[Interview ManualTest] 从URL获取encryptJobId失败:', urlErr)
+          }
+        }
 
         console.log('[Interview ManualTest] 候选人信息:', {
           geekName,
           jobName,
-          encryptGeekId: encryptGeekId ? '已获取' : '空',
+          encryptGeekId: encryptGeekId ? '已获取(' + encryptGeekId.substring(0, 10) + '...)' : '空',
           encryptJobId: encryptJobId ? '已获取(' + encryptJobId.substring(0, 10) + '...)' : '空',
           targetChatEncryptJobId: (targetChat as any).encryptJobId ? '有' : '无',
           geekInfoEncryptJobId: geekInfo?.encryptJobId ? '有' : '无',
@@ -988,14 +1027,49 @@ export async function runManualTest() {
         continue
       }
 
-      // 获取候选人状态（仅当有 encryptJobId 时才能查询）
+      // 【修复】获取候选人状态（多种查询方式）
       let candidate: Candidate | null = null
-      if (encryptJobId) {
+
+      // 方式1：使用 encryptGeekId + encryptJobId 精确查询
+      if (encryptGeekId && encryptJobId) {
         candidate = await getCandidate(dataSource!, encryptGeekId, encryptJobId)
+        console.log('[Interview ManualTest] 查询候选人(方式1):', candidate ?
+          `已存在，状态=${candidate.status}, 轮次=${candidate.currentRound}` : '不存在')
       }
 
-      // 处理不同状态的候选人
-      const candidateStatus = candidate?.status || 'new'
+      // 方式2：如果 encryptJobId 为空，尝试只用 encryptGeekId 查询（宽松匹配）
+      if (!candidate && encryptGeekId && !encryptJobId) {
+        const candRepo = dataSource!.getRepository('InterviewCandidate')
+        const candidates = await candRepo.find({
+          where: { encryptGeekId },
+          order: { updatedAt: 'DESC' },
+          take: 1
+        })
+        if (candidates.length > 0) {
+          candidate = candidates[0] as Candidate
+          console.log('[Interview ManualTest] 查询候选人(方式2-只用encryptGeekId):',
+            `已存在，状态=${candidate.status}, 轮次=${candidate.currentRound}, encryptJobId=${candidate.encryptJobId || '空'}`)
+          // 补充 encryptJobId
+          if (!encryptJobId && candidate.encryptJobId) {
+            encryptJobId = candidate.encryptJobId
+            console.log('[Interview ManualTest] 从数据库补充encryptJobId:', encryptJobId.substring(0, 10))
+          }
+        }
+      }
+
+      // 【修复】处理状态异常
+      const validStatuses = ['new', 'waiting_round_1', 'waiting_round_2', 'waiting_round_3', 'passed', 'rejected', 'resume_requested']
+      let candidateStatus = candidate?.status || 'new'
+      if (!validStatuses.includes(candidateStatus)) {
+        console.warn('[Interview ManualTest] 候选人状态异常:', candidateStatus, '，重置为new')
+        candidateStatus = 'new'
+        // 如果数据库中有异常状态，更新为new
+        if (candidate && encryptJobId) {
+          const candRepo = dataSource!.getRepository('InterviewCandidate')
+          await candRepo.update(candidate.id!, { status: 'new' })
+          candidate.status = 'new'
+        }
+      }
 
       // === 分支1: 处理等待回复的候选人（评分流程） ===
       if (candidateStatus.startsWith('waiting_round_')) {
@@ -1033,7 +1107,7 @@ export async function runManualTest() {
         const scoreConfirmRes = await dialog.showMessageBox({
           type: 'question',
           message: `确认对第 ${currentRound} 轮回复进行评分`,
-          detail: `候选人：${geekName}\n应聘岗位：${jobName}\n当前轮次：第 ${currentRound} 轮\n\n回复内容：\n${mergedText.substring(0, 200)}${mergedText.length > 200 ? '...' : ''}\n\n关键词配置：${questionRound.keywords || '无'}\n\n点击「评分」开始自动评分。`,
+          detail: `候选人：${geekName}\n应聘岗位：${jobName}\n当前轮次：第 ${currentRound} 轮\n通过阈值：${matchedPosition.passThreshold}分\n\n回复内容：\n${mergedText.substring(0, 200)}${mergedText.length > 200 ? '...' : ''}\n\n点击「评分」开始AI评分。`,
           buttons: ['评分', '跳过', '退出'],
           defaultId: 0
         })
@@ -1053,8 +1127,7 @@ export async function runManualTest() {
           candidate!,
           questionRound.questionText,
           mergedText,
-          questionRound as any,
-          matchedPosition.passThreshold
+          matchedPosition as any
         )
 
         console.log('[Interview ManualTest] 评分结果:', JSON.stringify(scoreResult))
@@ -1073,11 +1146,9 @@ export async function runManualTest() {
               await qaRepo.update(existingRecord.id!, {
                 answerText: mergedText,
                 answeredAt: new Date(),
-                keywordScore: scoreResult.keywordScore,
                 llmScore: scoreResult.llmScore,
                 totalScore: scoreResult.totalScore,
                 llmReason: scoreResult.llmReason,
-                matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
                 scoredAt: new Date()
               })
             } else {
@@ -1089,11 +1160,9 @@ export async function runManualTest() {
                 answerText: mergedText,
                 answeredAt: new Date(),
                 questionSentAt: candidate.lastQuestionAt,
-                keywordScore: scoreResult.keywordScore,
                 llmScore: scoreResult.llmScore,
                 totalScore: scoreResult.totalScore,
                 llmReason: scoreResult.llmReason,
-                matchedKeywords: JSON.stringify(scoreResult.matchedKeywords),
                 scoredAt: new Date()
               }))
             }
@@ -1102,8 +1171,6 @@ export async function runManualTest() {
             const candRepo = dataSource!.getRepository('InterviewCandidate')
             await candRepo.update(candidate.id!, {
               totalScore: scoreResult.totalScore,
-              keywordScore: scoreResult.keywordScore,
-              llmScore: scoreResult.llmScore,
               llmReason: scoreResult.llmReason,
               lastReplyAt: new Date(),
               lastScoredAt: latestMessageTime || new Date()  // 记录已评分的消息时间，避免重复评分
@@ -1165,15 +1232,10 @@ export async function runManualTest() {
             })
 
             if (inviteRes.response === 0) {
-              // 优先尝试点击"求简历"按钮
-              let sendSuccess = await clickResumeExchangeBtn(page)
-
-              if (!sendSuccess) {
-                // 如果点击按钮失败，回退到发送文本消息
-                console.log('[Interview ManualTest] 点击"求简历"按钮失败，回退到发送文本消息')
-                const inviteText = matchedPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
-                sendSuccess = await sendResumeInvite(page, inviteText)
-              }
+              // 【修复】根据用户配置：发送文字消息（而不是点击按钮）
+              const inviteText = matchedPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+              console.log('[Interview ManualTest] 发送简历邀约文字消息...')
+              const sendSuccess = await sendResumeInvite(page, inviteText)
 
               if (sendSuccess && encryptJobId && candidate) {
                 const candRepo = dataSource!.getRepository('InterviewCandidate')
@@ -1253,11 +1315,19 @@ export async function runManualTest() {
 
         // 发送问题
         console.log('[Interview ManualTest] 开始发送问题:', questionData.questionText.substring(0, 50))
-        const sendSuccess = await sendChatMessage(page, questionData.questionText)
+        let sendSuccess = await sendChatMessage(page, questionData.questionText)
         console.log('[Interview ManualTest] 发送结果:', sendSuccess ? '成功' : '失败')
 
+        // 【修复】发送失败重试一次
         if (!sendSuccess) {
-          console.log('[Interview ManualTest] 发送失败，跳过')
+          console.log('[Interview ManualTest] 发送失败，等待2秒后重试...')
+          await sleep(2000)
+          sendSuccess = await sendChatMessage(page, questionData.questionText)
+          console.log('[Interview ManualTest] 重试结果:', sendSuccess ? '成功' : '失败')
+        }
+
+        if (!sendSuccess) {
+          console.log('[Interview ManualTest] 发送失败，跳过该候选人')
           cursorIndex += 1
           continue
         }
@@ -1288,7 +1358,9 @@ export async function runManualTest() {
             console.error('[Interview ManualTest] 保存数据库失败:', dbErr)
           }
         } else {
-          console.log('[Interview ManualTest] 未获取到 encryptJobId，跳过数据库保存')
+          // 【修复】encryptJobId缺失时提示用户
+          console.warn('[Interview ManualTest] 未获取到 encryptJobId，跳过数据库保存')
+          // 尝试继续处理，但不保存数据库（至少发送了消息）
         }
 
         processedCount++

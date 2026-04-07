@@ -19,7 +19,6 @@ import { RecruiterProcessLog } from "./entity/RecruiterProcessLog";
 import { RecruiterDailyStats } from "./entity/RecruiterDailyStats";
 import { InterviewJobPosition } from "./entity/InterviewJobPosition";
 import { InterviewQuestionRound } from "./entity/InterviewQuestionRound";
-import { InterviewScoreRule } from "./entity/InterviewScoreRule";
 import { InterviewCandidate, InterviewCandidateStatus } from "./entity/InterviewCandidate";
 import { InterviewQaRecord } from "./entity/InterviewQaRecord";
 import { InterviewResume } from "./entity/InterviewResume";
@@ -711,7 +710,7 @@ export async function getInterviewJobPositionList(ds: DataSource) {
 }
 
 /**
- * 获取面试岗位配置（含问题轮次和评分规则）
+ * 获取面试岗位配置（含问题轮次）
  */
 export async function getInterviewJobPositionWithDetails(
   ds: DataSource,
@@ -719,7 +718,6 @@ export async function getInterviewJobPositionWithDetails(
 ) {
   const repo = ds.getRepository(InterviewJobPosition);
   const questionRoundRepo = ds.getRepository(InterviewQuestionRound);
-  const scoreRuleRepo = ds.getRepository(InterviewScoreRule);
 
   const jobPosition = await repo.findOne({ where: { id } });
   if (!jobPosition) return null;
@@ -729,11 +727,7 @@ export async function getInterviewJobPositionWithDetails(
     order: { roundNumber: 'ASC' }
   });
 
-  const scoreRules = await scoreRuleRepo.find({
-    where: { jobPositionId: id }
-  });
-
-  return { ...jobPosition, questionRounds, scoreRules };
+  return { ...jobPosition, questionRounds };
 }
 
 /**
@@ -771,27 +765,6 @@ export async function saveInterviewQuestionRound(
 export async function deleteInterviewQuestionRound(ds: DataSource, id: number) {
   const repo = ds.getRepository(InterviewQuestionRound);
   await repo.delete(id);
-}
-
-/**
- * 保存评分规则
- */
-export async function saveInterviewScoreRule(
-  ds: DataSource,
-  data: Partial<InterviewScoreRule>
-) {
-  const repo = ds.getRepository(InterviewScoreRule);
-  let entity: InterviewScoreRule;
-
-  if (data.id) {
-    entity = await repo.findOne({ where: { id: data.id } }) || new InterviewScoreRule();
-  } else {
-    entity = new InterviewScoreRule();
-  }
-
-  Object.assign(entity, data);
-  await repo.save(entity);
-  return entity;
 }
 
 /**

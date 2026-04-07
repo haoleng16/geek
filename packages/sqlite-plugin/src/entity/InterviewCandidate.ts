@@ -52,13 +52,7 @@ export class InterviewCandidate {
   currentRound: number;              // 当前轮次
 
   @Column({ nullable: true, type: 'decimal', precision: 5, scale: 2 })
-  totalScore: number;                // 总得分
-
-  @Column({ nullable: true, type: 'decimal', precision: 5, scale: 2 })
-  keywordScore: number;              // 关键词得分
-
-  @Column({ nullable: true, type: 'decimal', precision: 5, scale: 2 })
-  llmScore: number;                  // LLM得分
+  totalScore: number;                // 总得分（纯LLM评分）
 
   @Column({ nullable: true, type: 'text' })
   llmReason: string;                 // LLM评分理由

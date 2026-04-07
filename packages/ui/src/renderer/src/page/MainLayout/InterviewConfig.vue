@@ -49,22 +49,29 @@
               <el-input v-model="jobForm.name" placeholder="请输入岗位名称" />
             </el-form-item>
 
-            <el-form-item label="岗位描述">
-              <el-input
-                v-model="jobForm.description"
-                type="textarea"
-                :rows="3"
-                placeholder="请输入岗位描述（可选）"
-              />
+            <el-form-item label="启用状态">
+              <el-switch v-model="jobForm.isActive" />
             </el-form-item>
+
+            <!-- LLM评分提示词 -->
+            <el-divider content-position="left">评分配置</el-divider>
 
             <el-form-item label="通过阈值">
               <el-input-number v-model="jobForm.passThreshold" :min="0" :max="100" />
-              <span class="form-tip">候选人总分达到此阈值才算通过</span>
+              <span class="form-tip">分（候选人得分 >= 此阈值才算通过）</span>
             </el-form-item>
 
-            <el-form-item label="启用状态">
-              <el-switch v-model="jobForm.isActive" />
+            <el-form-item label="评分提示词" required>
+              <el-input
+                v-model="jobForm.llmScoringPrompt"
+                type="textarea"
+                :rows="10"
+                placeholder="请输入LLM评分提示词"
+              />
+              <div class="form-tip">
+                提示词中使用 {question} 代表问题，{answer} 代表候选人回答。<br/>
+                LLM需返回JSON格式：{"score": 0-100, "reason": "评分理由"}
+              </div>
             </el-form-item>
 
             <!-- 候选人筛选条件 -->
@@ -77,7 +84,7 @@
                 <el-checkbox label="硕士/研究生">硕士/研究生</el-checkbox>
                 <el-checkbox label="博士">博士</el-checkbox>
               </el-checkbox-group>
-              <div class="form-tip">多选时满足任一条件即可（OR逻辑），不选则不筛选学历</div>
+              <div class="form-tip">多选时满足任一条件即可，不选则不筛选学历</div>
             </el-form-item>
 
             <el-form-item label="经验筛选">
@@ -89,7 +96,7 @@
                 <el-checkbox label="25届应届生">25届应届生</el-checkbox>
                 <el-checkbox label="26届应届生">26届应届生</el-checkbox>
               </el-checkbox-group>
-              <div class="form-tip">多选时满足任一条件即可（OR逻辑），"3年以上"包含3年及以上所有经验，不选则不筛选经验</div>
+              <div class="form-tip">多选时满足任一条件即可，"3年以上"包含3年及以上所有经验，不选则不筛选经验</div>
             </el-form-item>
 
             <!-- 问题轮次配置 -->
@@ -111,46 +118,6 @@
                     :rows="2"
                     placeholder="请输入面试问题"
                   />
-                </el-form-item>
-
-                <el-form-item label="超时时间">
-                  <el-input-number v-model="round.waitTimeoutMinutes" :min="10" :max="1440" />
-                  <span class="form-tip">分钟</span>
-                </el-form-item>
-
-                <el-form-item label="评分关键词">
-                  <el-select
-                    v-model="round.keywords"
-                    multiple
-                    filterable
-                    allow-create
-                    default-first-option
-                    placeholder="输入关键词后回车添加"
-                    style="width: 100%"
-                  />
-                </el-form-item>
-
-                <el-form-item label="否定词">
-                  <el-select
-                    v-model="round.negationWords"
-                    multiple
-                    filterable
-                    allow-create
-                    default-first-option
-                    placeholder="输入否定词后回车添加（如：没有、没、无）"
-                    style="width: 100%"
-                  />
-                  <div class="form-tip">当这些词出现在关键词前面时，视为否定该关键词，评分不通过</div>
-                </el-form-item>
-
-                <el-form-item label="关键词权重">
-                  <el-input-number v-model="round.keywordScore" :min="0" :max="100" />
-                  <span class="form-tip">%</span>
-                </el-form-item>
-
-                <el-form-item label="AI评分权重">
-                  <el-input-number v-model="round.llmScore" :min="0" :max="100" />
-                  <span class="form-tip">%</span>
                 </el-form-item>
               </el-card>
             </div>
@@ -232,6 +199,34 @@ import { ElForm, ElMessage, ElMessageBox } from 'element-plus'
 import RunningOverlay from '@renderer/features/RunningOverlay/index.vue'
 import { RUNNING_STATUS_ENUM } from '../../../../common/enums/auto-start-chat'
 
+// 默认LLM评分提示词模板
+const DEFAULT_LLM_SCORING_PROMPT = `你是一个专业的招聘面试评分助手。请根据候选人的回答进行评分。
+
+## 问题
+{question}
+
+## 候选人回答
+{answer}
+
+## 评分标准
+请根据以下标准评分（0-100分）：
+- 60分：候选人提到有相关经验，但描述较简单
+- 70分：候选人描述了具体细节，有一定深度
+- 80分及以上：候选人描述丰富，展现了深入理解和实际经验
+
+评分时请考虑：
+1. 回答是否切题
+2. 是否有具体细节
+3. 是否展现了相关经验
+
+请以JSON格式返回评分结果：
+{
+  "score": <0-100的分数>,
+  "reason": "<简要说明评分依据>"
+}
+
+只返回JSON，不要其他内容。`
+
 const formRef = ref<InstanceType<typeof ElForm> | null>(null)
 const runRecordId = ref<number | null>(null)
 const runningOverlayRef = ref<any>(null)
@@ -251,20 +246,16 @@ const formContent = ref(getDefaultFormContent())
 
 const getDefaultJobForm = () => ({
   name: '',
-  description: '',
   passThreshold: 60,
   isActive: true,
+  llmScoringPrompt: DEFAULT_LLM_SCORING_PROMPT,
   educationFilter: [],
   experienceFilter: [],
+  resumeInviteText: '',
   questionRounds: [
     {
       roundNumber: 1,
-      questionText: '',
-      waitTimeoutMinutes: 60,
-      keywords: [],
-      negationWords: [],
-      keywordScore: 50,
-      llmScore: 50
+      questionText: ''
     }
   ]
 })
@@ -332,10 +323,10 @@ function handleEditJob(row: any) {
     ...row,
     educationFilter,
     experienceFilter,
+    llmScoringPrompt: row.llmScoringPrompt || DEFAULT_LLM_SCORING_PROMPT,
     questionRounds: row.questionRounds?.map((r: any) => ({
-      ...r,
-      keywords: r.keywords ? JSON.parse(r.keywords) : [],
-      negationWords: r.negationWords ? JSON.parse(r.negationWords) : []
+      roundNumber: r.roundNumber,
+      questionText: r.questionText
     })) || []
   }
   dialogVisible.value = true
@@ -363,12 +354,7 @@ function addQuestionRound() {
   const nextRound = jobForm.value.questionRounds.length + 1
   jobForm.value.questionRounds.push({
     roundNumber: nextRound,
-    questionText: '',
-    waitTimeoutMinutes: 60,
-    keywords: [],
-    negationWords: [],
-    keywordScore: 50,
-    llmScore: 50
+    questionText: ''
   })
 }
 
@@ -386,6 +372,19 @@ async function handleSaveJob() {
     return
   }
 
+  // 验证提示词
+  if (!jobForm.value.llmScoringPrompt || !jobForm.value.llmScoringPrompt.trim()) {
+    ElMessage.warning('请输入评分提示词')
+    return
+  }
+
+  // 检查必要变量是否存在
+  const prompt = jobForm.value.llmScoringPrompt
+  if (!prompt.includes('{question}') || !prompt.includes('{answer}')) {
+    ElMessage.warning('评分提示词必须包含 {question} 和 {answer} 变量')
+    return
+  }
+
   // 检查问题轮次
   const validRounds = jobForm.value.questionRounds.filter(r => r.questionText)
   if (validRounds.length === 0) {
@@ -399,9 +398,8 @@ async function handleSaveJob() {
       educationFilter: JSON.stringify(jobForm.value.educationFilter || []),
       experienceFilter: JSON.stringify(jobForm.value.experienceFilter || []),
       questionRounds: jobForm.value.questionRounds.map(r => ({
-        ...r,
-        keywords: JSON.stringify(r.keywords || []),
-        negationWords: JSON.stringify(r.negationWords || [])
+        roundNumber: r.roundNumber,
+        questionText: r.questionText
       }))
     }
 

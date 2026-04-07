@@ -50,41 +50,6 @@ const createWorkerPromise = async (data) => {
   })
 }
 
-export const getAutoStartChatRecord = async ({ pageNo, pageSize }: Partial<PageReq> = {}) => {
-  const res = await createWorkerPromise({
-    type: 'getAutoStartChatRecord',
-    pageNo,
-    pageSize
-  })
-  return res
-}
-
-export const getMarkAsNotSuitRecord = async ({ pageNo, pageSize }: Partial<PageReq> = {}) => {
-  const res = await createWorkerPromise({
-    type: 'getMarkAsNotSuitRecord',
-    pageNo,
-    pageSize
-  })
-  return res
-}
-
-export const getJobLibrary = async ({ pageNo, pageSize }: Partial<PageReq> = {}) => {
-  const res = await createWorkerPromise({
-    type: 'getJobLibrary',
-    pageNo,
-    pageSize
-  })
-  return res
-}
-
-export const getJobHistoryByEncryptId = async (encryptJobId) => {
-  const res = await createWorkerPromise({
-    type: 'getJobHistoryByEncryptId',
-    encryptJobId
-  })
-  return res
-}
-
 export const saveAndGetCurrentRunRecord = async () => {
   const res = await createWorkerPromise({
     type: 'saveAndGetCurrentRunRecord'
@@ -337,14 +302,6 @@ export const deleteInterviewQuestionRound = async (id: number) => {
   const res = await createWorkerPromise({
     type: 'deleteInterviewQuestionRound',
     id
-  })
-  return res
-}
-
-export const saveInterviewScoreRule = async (data: any) => {
-  const res = await createWorkerPromise({
-    type: 'saveInterviewScoreRule',
-    ...data
   })
   return res
 }
