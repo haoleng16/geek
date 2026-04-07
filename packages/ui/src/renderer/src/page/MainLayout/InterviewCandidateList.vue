@@ -41,6 +41,11 @@
         @row-click="handleRowClick"
       >
         <el-table-column prop="geekName" label="姓名" width="120" />
+        <el-table-column prop="education" label="学历" width="100">
+          <template #default="{ row }">
+            <span>{{ row.education || '--' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="jobName" label="应聘岗位" min-width="150" />
         <el-table-column prop="status" label="状态" width="120">
           <template #default="{ row }">
@@ -67,9 +72,38 @@
             {{ formatDate(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="问答详情" width="120">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click.stop="handleViewDetail(row)">详情</el-button>
+            <el-dropdown trigger="click" @command="(cmd) => handleDropdownClick(cmd, row)" placement="bottom-start">
+              <el-button type="primary" link size="small">
+                查看<el-icon class="el-icon--right"><arrow-down /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <template v-if="row.qaRecords && row.qaRecords.length > 0">
+                    <el-dropdown-item v-for="qa in row.qaRecords" :key="qa.id" :command="'detail'" disabled>
+                      <div class="qa-dropdown-item">
+                        <div class="qa-round-label">第{{ qa.roundNumber }}轮</div>
+                        <div class="qa-question"><strong>问：</strong>{{ truncateText(qa.questionText, 50) }}</div>
+                        <div class="qa-answer"><strong>答：</strong>{{ truncateText(qa.answerText, 50) }}</div>
+                        <div class="qa-score" v-if="qa.totalScore">
+                          <strong>得分：</strong>
+                          <span :class="{ 'text-success': qa.totalScore >= 60, 'text-danger': qa.totalScore < 60 }">
+                            {{ qa.totalScore }}分
+                          </span>
+                        </div>
+                      </div>
+                    </el-dropdown-item>
+                  </template>
+                  <el-dropdown-item v-else disabled>
+                    <span style="color: #909399;">暂无问答记录</span>
+                  </el-dropdown-item>
+                  <el-dropdown-item divided :command="'fullDetail'">
+                    <el-button type="primary" link size="small">完整详情</el-button>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -92,6 +126,7 @@
       <template v-if="currentCandidate">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="姓名">{{ currentCandidate.geekName }}</el-descriptions-item>
+          <el-descriptions-item label="学历">{{ currentCandidate.education || '--' }}</el-descriptions-item>
           <el-descriptions-item label="应聘岗位">{{ currentCandidate.jobName }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="getStatusTagType(currentCandidate.status)">
@@ -106,7 +141,9 @@
               {{ currentCandidate.totalScore || '-' }}分
             </span>
           </el-descriptions-item>
-          <el-descriptions-item label="AI评分理由">
+          <el-descriptions-item label="毕业院校" v-if="currentCandidate.school">{{ currentCandidate.school }}</el-descriptions-item>
+          <el-descriptions-item label="专业" v-if="currentCandidate.major">{{ currentCandidate.major }}</el-descriptions-item>
+          <el-descriptions-item label="AI评分理由" :span="2">
             {{ currentCandidate.llmReason || '-' }}
           </el-descriptions-item>
         </el-descriptions>
@@ -143,6 +180,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const candidateList = ref<any[]>([])
@@ -176,8 +214,27 @@ async function loadCandidates() {
     })
 
     if (result.success) {
-      candidateList.value = result.data.list || []
+      // 获取候选人列表
+      const candidates = result.data.list || []
       pagination.total = result.data.total || 0
+
+      // 为每个候选人获取问答记录（用于下拉显示）
+      const candidatesWithQa = await Promise.all(candidates.map(async (candidate) => {
+        try {
+          const detailResult = await electron.ipcRenderer.invoke('interview-get-candidate-detail', candidate.id)
+          if (detailResult.success) {
+            return {
+              ...candidate,
+              qaRecords: detailResult.data.qaRecords || []
+            }
+          }
+          return { ...candidate, qaRecords: [] }
+        } catch {
+          return { ...candidate, qaRecords: [] }
+        }
+      }))
+
+      candidateList.value = candidatesWithQa
     }
   } catch (error) {
     console.error('加载候选人列表失败:', error)
@@ -284,6 +341,18 @@ function formatDate(date: string | Date): string {
     minute: '2-digit'
   })
 }
+
+function truncateText(text: string, maxLength: number): string {
+  if (!text) return '(无)'
+  if (text.length <= maxLength) return text
+  return text.substring(0, maxLength) + '...'
+}
+
+function handleDropdownClick(command: string, row: any) {
+  if (command === 'fullDetail') {
+    handleViewDetail(row)
+  }
+}
 </script>
 
 <style lang="scss">
@@ -327,6 +396,32 @@ function formatDate(date: string | Date): string {
 
   .text-danger {
     color: #f56c6c;
+  }
+
+  // 下拉菜单样式
+  .qa-dropdown-item {
+    padding: 4px 0;
+    min-width: 300px;
+    font-size: 13px;
+    line-height: 1.6;
+
+    .qa-round-label {
+      font-weight: bold;
+      color: #409eff;
+      margin-bottom: 4px;
+    }
+
+    .qa-question,
+    .qa-answer {
+      color: #606266;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .qa-score {
+      margin-top: 4px;
+      color: #909399;
+    }
   }
 }
 </style>

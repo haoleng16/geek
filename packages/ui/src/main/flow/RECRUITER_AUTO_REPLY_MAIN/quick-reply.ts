@@ -357,6 +357,156 @@ export async function getCurrentChatGeekInfo(page: Page): Promise<{
 }
 
 /**
+ * 【新增】获取候选人教育信息
+ * 从BOSS聊天界面右侧个人信息区域提取学历信息
+ */
+export async function getGeekEducationInfo(page: Page): Promise<{
+  education: string
+  school: string
+  major: string
+} | null> {
+  try {
+    const educationInfo = await page.evaluate(() => {
+      // 学历关键词列表
+      const eduKeywords = ['大专', '本科', '硕士', '博士', '研究生', '高中', '中专', '技校', '本科及以上', '硕士及以上']
+
+      let education = ''
+      let school = ''
+      let major = ''
+
+      // 【主要方法】从 .base-info-single-detial 容器获取
+      // BOSS直聘聊天界面右侧候选人基本信息容器
+      const baseInfoEl = document.querySelector('.base-info-single-detial')
+
+      if (baseInfoEl) {
+        console.log('[GeekEducation] 找到 .base-info-single-detial 容器')
+        const divs = baseInfoEl.querySelectorAll('div')
+        console.log('[GeekEducation] 找到', divs.length, '个div子元素')
+
+        for (const div of divs) {
+          const text = div.textContent?.trim() || ''
+          console.log('[GeekEducation] div文本:', text)
+
+          // 检查是否包含学历关键词
+          for (const keyword of eduKeywords) {
+            if (text === keyword || text.includes(keyword)) {
+              education = keyword
+              console.log('[GeekEducation] 匹配到学历:', keyword)
+              break
+            }
+          }
+          if (education) break
+        }
+      } else {
+        console.log('[GeekEducation] 未找到 .base-info-single-detial')
+      }
+
+      // 【备选方法】如果没找到，尝试其他选择器
+      if (!education) {
+        const fallbackSelectors = [
+          '.geek-info',
+          '.geek-detail',
+          '.candidate-info',
+          '.right-box',
+          '[class*="base-info"]',
+          '[class*="geek"]'
+        ]
+
+        for (const selector of fallbackSelectors) {
+          const panel = document.querySelector(selector)
+          if (panel) {
+            console.log('[GeekEducation] 尝试备选选择器:', selector)
+            const panelText = panel.textContent || ''
+            console.log('[GeekEducation] 面板文本 (前200字符):', panelText.substring(0, 200))
+
+            for (const keyword of eduKeywords) {
+              if (panelText.includes(keyword)) {
+                education = keyword
+                console.log('[GeekEducation] 从备选面板找到学历:', keyword)
+                break
+              }
+            }
+            if (education) break
+          }
+        }
+      }
+
+      console.log('[GeekEducation] 最终结果: education=', education, 'school=', school, 'major=', major)
+
+      return { education, school, major }
+    })
+
+    console.log(`[GeekEducation] 提取结果: education=${educationInfo.education}, school=${educationInfo.school}, major=${educationInfo.major}`)
+
+    return educationInfo
+  } catch (error) {
+    console.error('[GeekEducation] 提取教育信息失败:', error)
+    return null
+  }
+}
+
+/**
+ * 【新增】获取候选人工作经验信息
+ * 从BOSS聊天界面右侧个人信息区域提取经验信息
+ */
+export async function getGeekExperienceInfo(page: Page): Promise<{
+  experience: string
+  isFreshGraduate: boolean
+  graduateYear: string | null
+} | null> {
+  try {
+    const experienceInfo = await page.evaluate(() => {
+      let experience = ''
+      let isFreshGraduate = false
+      let graduateYear: string | null = null
+
+      // 从 .base-info-single-detial 容器获取
+      const baseInfoEl = document.querySelector('.base-info-single-detial')
+
+      if (baseInfoEl) {
+        console.log('[GeekExperience] 找到 .base-info-single-detial 容器')
+        const divs = baseInfoEl.querySelectorAll('div')
+
+        for (const div of divs) {
+          const text = div.textContent?.trim() || ''
+          console.log('[GeekExperience] div文本:', text)
+
+          // 检查是否是应届生
+          const freshGraduateMatch = text.match(/(\d{2})届应届生/)
+          if (freshGraduateMatch) {
+            isFreshGraduate = true
+            graduateYear = freshGraduateMatch[1]
+            experience = text
+            console.log('[GeekExperience] 匹配到应届生:', text, '届别:', graduateYear)
+            break
+          }
+
+          // 检查是否是工作年限
+          // 匹配格式：1年、2年、3年、10年以上 等
+          const expMatch = text.match(/^(\d+)年$|^(\d+)年以上$|^(\d+)-(\d+)年$/)
+          if (expMatch) {
+            experience = text
+            console.log('[GeekExperience] 匹配到工作经验:', text)
+            break
+          }
+        }
+      } else {
+        console.log('[GeekExperience] 未找到 .base-info-single-detial')
+      }
+
+      return { experience, isFreshGraduate, graduateYear }
+    })
+
+    console.log(`[GeekExperience] 提取结果: experience=${experienceInfo.experience}, isFreshGraduate=${experienceInfo.isFreshGraduate}, graduateYear=${experienceInfo.graduateYear}`)
+
+    return experienceInfo
+  } catch (error) {
+    console.error('[GeekExperience] 提取经验信息失败:', error)
+    return null
+  }
+}
+
+/**
  * 检查是否可以发送消息
  */
 export async function canSendMessage(page: Page): Promise<boolean> {

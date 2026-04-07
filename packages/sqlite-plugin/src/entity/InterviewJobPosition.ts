@@ -30,6 +30,13 @@ export class InterviewJobPosition {
   @Column({ nullable: true, type: 'text' })
   resumeInviteText: string;          // 通过所有轮次后发送的简历邀约话术
 
+  // 新增：候选人筛选条件
+  @Column({ nullable: true, type: 'text' })
+  educationFilter: string;           // 学历筛选，JSON数组，如["本科","硕士"]
+
+  @Column({ nullable: true, type: 'text' })
+  experienceFilter: string;          // 经验筛选，JSON数组，如["3年以上","26届应届生"]
+
   @CreateDateColumn()
   createdAt: Date;
 

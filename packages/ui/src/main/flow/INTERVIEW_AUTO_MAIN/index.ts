@@ -24,9 +24,9 @@ import { sleep, sleepWithRandomDelay } from '@geekgeekrun/utils/sleep.mjs'
 import { checkCookieListFormat } from '../../../common/utils/cookie'
 import { loginWithCookieAssistant } from '../../features/login-with-cookie-assistant'
 import type { Browser, Page } from 'puppeteer'
-import type { ChatListItem } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/types'
-import { getCurrentChatGeekInfo } from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
-import { sendMessage } from '../READ_NO_REPLY_AUTO_REMINDER_MAIN/boss-operation'
+import type { ChatListItem } from '../boss-chat-utils'
+import { getCurrentChatGeekInfo, getGeekEducationInfo, getGeekExperienceInfo } from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
+import { sendMessage } from '../boss-chat-utils'
 
 // 导入面试模块
 import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
@@ -330,6 +330,28 @@ const mainLoop = async () => {
 
         const jobPosition = matchResult.jobPosition
 
+        // 【新增】获取候选人教育信息和经验信息
+        const educationInfo = await getGeekEducationInfo(pageMapByName.boss!)
+        const experienceInfo = await getGeekExperienceInfo(pageMapByName.boss!)
+
+        // 【新增】候选人筛选检查
+        const filterResult = checkCandidateFilter(jobPosition, educationInfo, experienceInfo)
+        if (!filterResult.passed) {
+          console.log('[Interview MainLoop] 候选人不符合筛选条件:', filterResult.reason)
+          // 记录筛选日志
+          await saveInterviewOperationLog(dataSource!, {
+            action: 'candidate_filtered',
+            detail: JSON.stringify({
+              geekName,
+              jobName: targetChat.jobName,
+              education: educationInfo?.education,
+              experience: experienceInfo?.experience,
+              filterReason: filterResult.reason
+            })
+          })
+          continue // 跳过该候选人
+        }
+
         // 获取或创建候选人记录
         let candidate = await getInterviewCandidate(dataSource!, encryptGeekId, encryptJobId)
 
@@ -341,9 +363,25 @@ const mainLoop = async () => {
             jobName: targetChat.jobName,
             jobPositionId: jobPosition.id,
             status: InterviewCandidateStatus.NEW,
-            firstContactAt: new Date()
+            firstContactAt: new Date(),
+            // 【新增】保存教育和经验信息
+            education: educationInfo?.education || undefined,
+            school: educationInfo?.school || undefined,
+            major: educationInfo?.major || undefined
           })
           console.log('[Interview MainLoop] 创建候选人记录:', candidate.id)
+        } else if (educationInfo?.education && !candidate.education) {
+          // 如果候选人已存在但没有教育信息，更新教育信息
+          await saveInterviewCandidate(dataSource!, {
+            id: candidate.id,
+            education: educationInfo.education,
+            school: educationInfo.school,
+            major: educationInfo.major
+          })
+          candidate.education = educationInfo.education
+          candidate.school = educationInfo.school
+          candidate.major = educationInfo.major
+          console.log('[Interview MainLoop] 更新候选人教育信息:', educationInfo)
         }
 
         // 根据状态处理
@@ -1267,6 +1305,154 @@ async function tryDownloadResumeFromCard(
     console.error('[ResumeCard] 点击简历卡片失败:', error)
     return false
   }
+}
+
+/**
+ * 【新增】检查候选人是否符合筛选条件
+ * @param jobPosition 岗位配置
+ * @param educationInfo 教育信息
+ * @param experienceInfo 经验信息
+ * @returns 筛选结果
+ */
+function checkCandidateFilter(
+  jobPosition: any,
+  educationInfo: { education: string; school: string; major: string } | null,
+  experienceInfo: { experience: string; isFreshGraduate: boolean; graduateYear: string | null } | null
+): { passed: boolean; reason: string } {
+  // 解析筛选配置
+  let educationFilter: string[] = []
+  let experienceFilter: string[] = []
+
+  try {
+    if (jobPosition.educationFilter) {
+      educationFilter = JSON.parse(jobPosition.educationFilter)
+    }
+    if (jobPosition.experienceFilter) {
+      experienceFilter = JSON.parse(jobPosition.experienceFilter)
+    }
+  } catch (e) {
+    console.error('[Filter] 解析筛选配置失败:', e)
+  }
+
+  // 如果没有设置筛选条件，直接通过
+  if (educationFilter.length === 0 && experienceFilter.length === 0) {
+    return { passed: true, reason: '' }
+  }
+
+  // 学历筛选
+  if (educationFilter.length > 0) {
+    const candidateEdu = educationInfo?.education || ''
+
+    // 如果候选人没有学历信息，跳过筛选（继续处理）
+    if (!candidateEdu) {
+      console.log('[Filter] 候选人无学历信息，跳过学历筛选')
+    } else {
+      // 学历匹配逻辑
+      const eduPassed = matchEducation(candidateEdu, educationFilter)
+      if (!eduPassed) {
+        return {
+          passed: false,
+          reason: `学历不符合: 候选人学历"${candidateEdu}", 要求${educationFilter.join('/')}`
+        }
+      }
+    }
+  }
+
+  // 经验筛选
+  if (experienceFilter.length > 0) {
+    const candidateExp = experienceInfo?.experience || ''
+    const isFreshGraduate = experienceInfo?.isFreshGraduate || false
+    const graduateYear = experienceInfo?.graduateYear || null
+
+    // 如果候选人没有经验信息，跳过筛选（继续处理）
+    if (!candidateExp && !isFreshGraduate) {
+      console.log('[Filter] 候选人无经验信息，跳过经验筛选')
+    } else {
+      // 经验匹配逻辑
+      const expPassed = matchExperience(candidateExp, isFreshGraduate, graduateYear, experienceFilter)
+      if (!expPassed) {
+        return {
+          passed: false,
+          reason: `经验不符合: 候选人经验"${candidateExp || (isFreshGraduate ? (graduateYear || '') + '届应届生' : '未知')}", 要求${experienceFilter.join('/')}`
+        }
+      }
+    }
+  }
+
+  return { passed: true, reason: '' }
+}
+
+/**
+ * 学历匹配
+ */
+function matchEducation(candidateEdu: string, filterList: string[]): boolean {
+  for (const filter of filterList) {
+    // 大专及以下：匹配高中、中专、技校、大专
+    if (filter === '大专及以下') {
+      if (['高中', '中专', '技校', '大专'].includes(candidateEdu)) {
+        return true
+      }
+    }
+    // 硕士/研究生
+    else if (filter === '硕士/研究生') {
+      if (candidateEdu === '硕士' || candidateEdu === '研究生') {
+        return true
+      }
+    }
+    // 其他精确匹配
+    else if (candidateEdu === filter) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * 经验匹配
+ */
+function matchExperience(
+  candidateExp: string,
+  isFreshGraduate: boolean,
+  graduateYear: string | null,
+  filterList: string[]
+): boolean {
+  // 如果是应届生
+  if (isFreshGraduate && graduateYear) {
+    // 检查是否匹配应届生筛选
+    if (filterList.includes('25届应届生') && graduateYear === '25') {
+      return true
+    }
+    if (filterList.includes('26届应届生') && graduateYear === '26') {
+      return true
+    }
+    // 如果筛选条件里没有应届生选项，但不代表不通过
+    // 继续检查其他经验选项
+  }
+
+  // 解析候选人的工作年限
+  const expMatch = candidateExp.match(/^(\d+)年$|^(\d+)年以上$/)
+  const years = expMatch ? parseInt(expMatch[1] || expMatch[2]) : 0
+
+  for (const filter of filterList) {
+    // 应届生选项已在上面处理
+    if (filter.includes('应届生')) continue
+
+    if (filter === '1年及以下') {
+      if (years <= 1) return true
+    }
+    else if (filter === '2年') {
+      if (years === 2) return true
+    }
+    else if (filter === '3年') {
+      if (years === 3) return true
+    }
+    else if (filter === '3年以上') {
+      if (years >= 3) return true
+    }
+  }
+
+  return false
 }
 
 process.once('uncaughtException', (error) => {

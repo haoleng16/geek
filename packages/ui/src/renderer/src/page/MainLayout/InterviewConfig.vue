@@ -67,6 +67,31 @@
               <el-switch v-model="jobForm.isActive" />
             </el-form-item>
 
+            <!-- 候选人筛选条件 -->
+            <el-divider content-position="left">候选人筛选</el-divider>
+
+            <el-form-item label="学历筛选">
+              <el-checkbox-group v-model="jobForm.educationFilter">
+                <el-checkbox label="大专及以下">大专及以下</el-checkbox>
+                <el-checkbox label="本科">本科</el-checkbox>
+                <el-checkbox label="硕士/研究生">硕士/研究生</el-checkbox>
+                <el-checkbox label="博士">博士</el-checkbox>
+              </el-checkbox-group>
+              <div class="form-tip">多选时满足任一条件即可（OR逻辑），不选则不筛选学历</div>
+            </el-form-item>
+
+            <el-form-item label="经验筛选">
+              <el-checkbox-group v-model="jobForm.experienceFilter">
+                <el-checkbox label="1年及以下">1年及以下</el-checkbox>
+                <el-checkbox label="2年">2年</el-checkbox>
+                <el-checkbox label="3年">3年</el-checkbox>
+                <el-checkbox label="3年以上">3年以上</el-checkbox>
+                <el-checkbox label="25届应届生">25届应届生</el-checkbox>
+                <el-checkbox label="26届应届生">26届应届生</el-checkbox>
+              </el-checkbox-group>
+              <div class="form-tip">多选时满足任一条件即可（OR逻辑），"3年以上"包含3年及以上所有经验，不选则不筛选经验</div>
+            </el-form-item>
+
             <!-- 问题轮次配置 -->
             <el-divider content-position="left">问题轮次</el-divider>
 
@@ -229,6 +254,8 @@ const getDefaultJobForm = () => ({
   description: '',
   passThreshold: 60,
   isActive: true,
+  educationFilter: [],
+  experienceFilter: [],
   questionRounds: [
     {
       roundNumber: 1,
@@ -286,8 +313,25 @@ function handleAddJob() {
 
 function handleEditJob(row: any) {
   editingJob.value = row
+
+  // 解析筛选条件
+  let educationFilter: string[] = []
+  let experienceFilter: string[] = []
+  try {
+    if (row.educationFilter) {
+      educationFilter = JSON.parse(row.educationFilter)
+    }
+    if (row.experienceFilter) {
+      experienceFilter = JSON.parse(row.experienceFilter)
+    }
+  } catch (e) {
+    console.error('解析筛选条件失败:', e)
+  }
+
   jobForm.value = {
     ...row,
+    educationFilter,
+    experienceFilter,
     questionRounds: row.questionRounds?.map((r: any) => ({
       ...r,
       keywords: r.keywords ? JSON.parse(r.keywords) : [],
@@ -352,6 +396,8 @@ async function handleSaveJob() {
   try {
     const data = {
       ...jobForm.value,
+      educationFilter: JSON.stringify(jobForm.value.educationFilter || []),
+      experienceFilter: JSON.stringify(jobForm.value.experienceFilter || []),
       questionRounds: jobForm.value.questionRounds.map(r => ({
         ...r,
         keywords: JSON.stringify(r.keywords || []),
