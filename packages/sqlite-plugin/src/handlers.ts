@@ -734,6 +734,33 @@ export async function getInterviewJobPositionWithDetails(
  * 删除面试岗位配置
  */
 export async function deleteInterviewJobPosition(ds: DataSource, id: number) {
+  // 查找该岗位下所有候选人
+  const candidateRepo = ds.getRepository(InterviewCandidate);
+  const candidates = await candidateRepo.find({ where: { jobPositionId: id } });
+  const candidateIds = candidates.map(c => c.id!);
+
+  // 删除候选人关联的问答记录
+  if (candidateIds.length > 0) {
+    const qaRepo = ds.getRepository(InterviewQaRecord);
+    await qaRepo.delete(candidateIds.map(cid => ({ candidateId: cid })));
+
+    // 删除候选人关联的简历记录
+    const resumeRepo = ds.getRepository(InterviewResume);
+    await resumeRepo.delete(candidateIds.map(cid => ({ candidateId: cid })));
+
+    // 删除候选人关联的操作日志
+    const operationLogRepo = ds.getRepository(InterviewOperationLog);
+    await operationLogRepo.delete(candidateIds.map(cid => ({ candidateId: cid })));
+
+    // 删除候选人
+    await candidateRepo.delete(candidateIds);
+  }
+
+  // 删除关联的问题轮次
+  const questionRoundRepo = ds.getRepository(InterviewQuestionRound);
+  await questionRoundRepo.delete({ jobPositionId: id });
+
+  // 最后删除岗位
   const repo = ds.getRepository(InterviewJobPosition);
   await repo.delete(id);
 }

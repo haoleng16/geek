@@ -432,8 +432,19 @@ const payloadHandler = {
     return await repo.save(entity)
   },
   async deleteInterviewJobPosition({ id }): Promise<void> {
-    const repo = dataSource!.getRepository(InterviewJobPosition)
-    await repo.delete(id)
+    // 级联删除：先删关联数据，再删岗位
+    const candidateRepo = dataSource!.getRepository(InterviewCandidate)
+    const candidates = await candidateRepo.find({ where: { jobPositionId: id } })
+    const candidateIds = candidates.map(c => c.id)
+
+    if (candidateIds.length > 0) {
+      await dataSource!.getRepository(InterviewQaRecord).delete(candidateIds.map(cid => ({ candidateId: cid })))
+      await dataSource!.getRepository(InterviewResume).delete(candidateIds.map(cid => ({ candidateId: cid })))
+      await candidateRepo.delete(candidateIds)
+    }
+
+    await dataSource!.getRepository(InterviewQuestionRound).delete({ jobPositionId: id })
+    await dataSource!.getRepository(InterviewJobPosition).delete(id)
   },
   async saveInterviewQuestionRound(data: Partial<InterviewQuestionRound>): Promise<InterviewQuestionRound> {
     const repo = dataSource!.getRepository(InterviewQuestionRound)

@@ -68,9 +68,12 @@
                 :rows="10"
                 placeholder="请输入LLM评分提示词"
               />
-              <div class="form-tip">
-                提示词中使用 {question} 代表问题，{answer} 代表候选人回答。<br/>
-                LLM需返回JSON格式：{"score": 0-100, "reason": "评分理由"}
+              <div class="form-tip" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <span>
+                  提示词中使用 {question} 代表问题，{answer} 代表候选人回答。<br/>
+                  LLM需返回JSON格式：{"score": 0-100, "reason": "评分理由"}
+                </span>
+                <el-button type="primary" size="small" @click="handleSavePromptOnly">保存提示词</el-button>
               </div>
             </el-form-item>
 
@@ -407,6 +410,47 @@ async function handleSaveJob() {
     if (result.success) {
       ElMessage.success('保存成功')
       dialogVisible.value = false
+      await loadJobList()
+    } else {
+      ElMessage.error(result.error || '保存失败')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.message || '保存失败')
+  }
+}
+
+async function handleSavePromptOnly() {
+  if (!editingJob.value?.id) {
+    ElMessage.warning('请先保存岗位后再单独保存提示词')
+    return
+  }
+
+  if (!jobForm.value.llmScoringPrompt || !jobForm.value.llmScoringPrompt.trim()) {
+    ElMessage.warning('请输入评分提示词')
+    return
+  }
+
+  const prompt = jobForm.value.llmScoringPrompt
+  if (!prompt.includes('{question}') || !prompt.includes('{answer}')) {
+    ElMessage.warning('评分提示词必须包含 {question} 和 {answer} 变量')
+    return
+  }
+
+  try {
+    const data = {
+      id: editingJob.value.id,
+      name: editingJob.value.name,
+      passThreshold: editingJob.value.passThreshold,
+      isActive: editingJob.value.isActive,
+      llmScoringPrompt: jobForm.value.llmScoringPrompt,
+      educationFilter: editingJob.value.educationFilter,
+      experienceFilter: editingJob.value.experienceFilter,
+      questionRounds: []
+    }
+
+    const result = await electron.ipcRenderer.invoke('interview-save-job', data)
+    if (result.success) {
+      ElMessage.success('提示词保存成功')
       await loadJobList()
     } else {
       ElMessage.error(result.error || '保存失败')
