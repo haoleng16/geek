@@ -53,13 +53,6 @@ const routes: Array<RouteRecordRaw> = [
     }
   },
   {
-    path: '/readNoReplyReminderLlmMock',
-    component: () => import('@renderer/page/ReadNoReplyReminderLlmMock/index.vue'),
-    meta: {
-      title: '已读不回自动复聊 大语言模型测试'
-    }
-  },
-  {
     path: '/commonJobConditionConfig',
     component: () => import('@renderer/page/CommonJobConditionConfig/index.vue'),
     meta: {
@@ -69,62 +62,13 @@ const routes: Array<RouteRecordRaw> = [
   {
     path: '/main-layout',
     component: () => import('@renderer/page/MainLayout/index.vue'),
-    redirect: '/main-layout/GeekAutoStartChatWithBoss',
+    redirect: '/main-layout/SmartReply',
     children: [
       {
         path: 'taskManager',
         component: () => import('@renderer/page/MainLayout/TaskManager.vue'),
         meta: {
           title: '任务管理'
-        }
-      },
-      {
-        path: 'GeekAutoStartChatWithBoss',
-        component: () => import('@renderer/page/MainLayout/GeekAutoStartChatWithBoss/index.vue'),
-        meta: {
-          title: '自动开聊'
-        }
-      },
-      {
-        path: 'ReadNoReplyReminder',
-        component: () => import('@renderer/page/MainLayout/ReadNoReplyReminder.vue'),
-        meta: {
-          title: '已读不回自动复聊'
-        }
-      },
-      {
-        path: 'StartChatRecord',
-        component: () => import('@renderer/page/MainLayout/StartChatRecord.vue'),
-        meta: {
-          title: '开聊记录'
-        }
-      },
-      {
-        path: 'MarkAsNotSuitRecord',
-        component: () => import('@renderer/page/MainLayout/MarkAsNotSuitRecord.vue'),
-        meta: {
-          title: '标记不合适记录'
-        }
-      },
-      {
-        path: 'JobLibrary',
-        component: () => import('@renderer/page/MainLayout/JobLibrary.vue'),
-        meta: {
-          title: '职位库'
-        }
-      },
-      {
-        path: 'ContactedCandidates',
-        component: () => import('@renderer/page/MainLayout/ContactedCandidates.vue'),
-        meta: {
-          title: '已回复'
-        }
-      },
-      {
-        path: 'RecruiterAutoReply',
-        component: () => import('@renderer/page/MainLayout/RecruiterAutoReply.vue'),
-        meta: {
-          title: '招聘端自动回复'
         }
       },
       {
@@ -160,36 +104,6 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@renderer/page/MainLayout/InterviewEmailSetting.vue'),
         meta: {
           title: '邮件设置'
-        }
-      }
-    ]
-  },
-  {
-    path: '/geekAutoStartChatWithBoss',
-    component: () => import('@renderer/page/GeekAutoStartChatWithBoss/index.vue'),
-    children: [
-      {
-        path: 'prepareRun',
-        component: () => import('@renderer/page/GeekAutoStartChatWithBoss/PrepareRun.vue'),
-        meta: {
-          title: '自动开聊 正在预热'
-        }
-      },
-      {
-        path: 'runningStatus',
-        component: () => import('@renderer/page/GeekAutoStartChatWithBoss/RunningStatus.vue'),
-        meta: {
-          title: '自动开聊 正在为你开聊BOSS'
-        }
-      },
-      {
-        path: 'runningStatusForReadNoReplyReminder',
-        component: () =>
-          import(
-            '@renderer/page/GeekAutoStartChatWithBoss/RunningStatusForReadNoReplyReminder.vue'
-          ),
-        meta: {
-          title: '已读不回自动复聊 正在为你开聊BOSS'
         }
       }
     ]

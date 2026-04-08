@@ -1,8 +1,6 @@
 import overrideConsole from './utils/overrideConsole'
 import minimist from 'minimist'
-import { runCommon } from './features/run-common'
 import { launchDaemon } from './flow/OPEN_SETTING_WINDOW/launch-daemon'
-import { app } from 'electron'
 
 const isUiDev = process.env.NODE_ENV === 'development'
 const enableLogToFile = process.env.GEEKGEEKRUN_ENABLE_LOG_TO_FILE === String(1)
@@ -28,13 +26,6 @@ const runMode = commandlineArgs['mode']
 ;(async () => {
   switch (runMode) {
     // #region internal use
-    case 'geekAutoStartWithBossMain': {
-      const { waitForProcessHandShakeAndRunAutoChat } = await import(
-        './flow/GEEK_AUTO_START_CHAT_WITH_BOSS_MAIN/index'
-      )
-      waitForProcessHandShakeAndRunAutoChat()
-      break
-    }
     case 'downloadDependenciesForInit': {
       const { downloadDependenciesForInit } = await import('./flow/DOWNLOAD_DEPENDENCIES/index')
       downloadDependenciesForInit()
@@ -50,11 +41,6 @@ const runMode = commandlineArgs['mode']
     case 'launchBossSite': {
       const { launchBossSite } = await import('./flow/LAUNCH_BOSS_SITE')
       launchBossSite()
-      break
-    }
-    case 'readNoReplyAutoReminderMain': {
-      const { runEntry } = await import('./flow/READ_NO_REPLY_AUTO_REMINDER_MAIN/index')
-      runEntry()
       break
     }
     case 'recruiterAutoReplyMain': {
@@ -78,25 +64,6 @@ const runMode = commandlineArgs['mode']
     }
     // #endregion
 
-    // #region user entry
-    case 'geekAutoStartWithBoss': {
-      app.dock?.hide()
-      await launchDaemon()
-      const { isAlreadyRunning } = await runCommon({ mode: 'geekAutoStartWithBossMain' })
-      if (isAlreadyRunning) {
-        process.exit(0)
-      }
-      break
-    }
-    case 'readNoReplyAutoReminder': {
-      app.dock?.hide()
-      await launchDaemon()
-      const { isAlreadyRunning } = await runCommon({ mode: 'readNoReplyAutoReminderMain' })
-      if (isAlreadyRunning) {
-        process.exit(0)
-      }
-      break
-    }
     default: {
       globalThis.GEEKGEEKRUN_PROCESS_ROLE = 'ui'
       await launchDaemon()
