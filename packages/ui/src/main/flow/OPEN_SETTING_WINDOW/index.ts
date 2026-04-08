@@ -6,7 +6,6 @@ import initIpc from './ipc'
 import gtag from '../../utils/gtag'
 import initPublicIpc from '../../utils/initPublicIpc'
 import { sendToDaemon, closeDaemonClient } from './connect-to-daemon'
-import { initInterviewIpcHandlersLazy } from '../INTERVIEW_AUTO_MAIN/ipc-handlers'
 
 export function openSettingWindow() {
   // TODO: singleton lock; how can we check if there is another process should run as singleton with arguments?
@@ -38,8 +37,7 @@ export function openSettingWindow() {
     initPublicIpc()
     initIpc()
 
-    // 懒加载初始化面试系统 IPC handlers（立即注册，数据库在首次调用时初始化）
-    initInterviewIpcHandlersLazy()
+
 
     app.on('activate', function () {
       // On macOS it's common to re-create a window in the app when the
