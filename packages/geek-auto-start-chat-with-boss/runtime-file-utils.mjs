@@ -251,5 +251,6 @@ export const writeStorageFile = async (fileName, content, { isJson } = {}) => {
 }
 
 export const getPublicDbFilePath = () => {
+  ensureRuntimeFolderPathExist()
   return path.join(storageFilePath, 'public.db')
 }

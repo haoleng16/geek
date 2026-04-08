@@ -72,6 +72,9 @@ class Analytics {
     if (!params.engagement_time_msec) params.engagement_time_msec = DEFAULT_ENGAGEMENT_TIME_MSEC
 
     try {
+      if (!MEASUREMENT_ID || MEASUREMENT_ID.startsWith('<') || !API_SECRET || API_SECRET.startsWith('<')) {
+        return
+      }
       const response = await fetch(
         `${
           this.debug ? GA_DEBUG_ENDPOINT : GA_ENDPOINT
