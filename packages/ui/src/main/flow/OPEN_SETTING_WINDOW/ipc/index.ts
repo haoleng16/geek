@@ -768,7 +768,6 @@ export default function initIpc() {
       console.error('interview-get-candidates error:', error)
       return { success: false, error: error?.message }
     }
-    }
   })
 
   // 获取候选人详情
