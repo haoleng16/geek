@@ -2,6 +2,13 @@ appId: com.geekgeekrun.ui
 productName: GeekGeekRun
 directories:
   buildResources: build
+files:
+  - 'out/**/*'
+  - 'resources/**/*'
+  - '!**/node_modules/@electron-toolkit/**/*'
+  - '!**/node_modules/electron/**/*'
+  - '!**/node_modules/electron-builder/**/*'
+  - '!**/node_modules/.pnpm/**/*'
 icon: resources/icon.png
 files:
   - '!**/.vscode/*'
@@ -17,6 +24,11 @@ files:
   - '!node_modules/typeorm/browser/*'
 asarUnpack:
   - 'resources/**'
+  - '**/node_modules/better-sqlite3/**/*.node'
+  - '**/node_modules/better-sqlite3/**/*.dll'
+  - '**/node_modules/better-sqlite3/**/*.exe'
+  - '**/node_modules/bindings/**/*'
+  - '**/node_modules/file-uri-to-path/**/*'
 win:
   executableName: geekgeekrun
 nsis:
@@ -38,7 +50,7 @@ linux:
   artifactName: ${name}_${version}_${arch}.${ext}
   maintainer: GeekGeekRun
   category: Utility
-npmRebuild: false
+npmRebuild: true
 publish:
   provider: generic
   url: https://example.com/auto-updates

@@ -5,10 +5,13 @@ import { PageReq } from '../../../../../common/types/pagination'
 
 let worker: Worker | null = null
 let workerExitCode: number | null = null
+let workerInitError: any = null
+
 export const initDbWorker = () => {
   if (!worker || typeof workerExitCode === 'number') {
     worker = createDbWorker()
     workerExitCode = null
+    workerInitError = null
     return new Promise((resolve, reject) => {
       worker!.once('exit', (exitCode) => {
         workerExitCode = exitCode
@@ -16,11 +19,16 @@ export const initDbWorker = () => {
       })
       worker!.on('message', function handler(data) {
         if (data.type === 'DB_INIT_SUCCESS') {
+          workerInitError = null
           resolve(worker)
-          // attach more event
           worker?.off('message', handler)
         } else if (data.type === 'DB_INIT_FAIL') {
-          reject(data.error)
+          const err = new Error(data.error?.message || 'DB init failed')
+          err.stack = data.error?.stack || err.stack
+          ;(err as any).code = data.error?.code
+          workerInitError = err
+          console.error('[DB Worker] 初始化失败:', err.message)
+          reject(err)
           worker?.terminate()
           worker?.off('message', handler)
           worker = null
@@ -33,7 +41,14 @@ export const initDbWorker = () => {
 }
 
 const createWorkerPromise = async (data) => {
-  await initDbWorker()
+  try {
+    await initDbWorker()
+  } catch (e) {
+    // Worker 初始化失败，清除引用允许下次重建
+    worker = null
+    workerExitCode = null
+    throw e
+  }
   if (!worker) {
     throw new Error('DB worker not available')
   }

@@ -30,11 +30,16 @@ dbInitPromise.then(
     })
   },
   (error) => {
+    // 序列化完整错误信息，Error 对象通过 postMessage 会丢失属性
     parentPort?.postMessage({
       type: 'DB_INIT_FAIL',
-      error
+      error: {
+        message: error?.message || String(error),
+        stack: error?.stack || '',
+        code: error?.code || ''
+      }
     })
-    process.exit(1)
+    // 不再 process.exit(1)，让主进程决定如何处理
   }
 )
 
