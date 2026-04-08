@@ -665,17 +665,27 @@ export default function initIpc() {
 
   // 获取面试岗位配置列表
   ipcMain.handle('interview-get-job-list', async () => {
-    const { getInterviewJobPositionList } = await import('../utils/db/index')
-    const result = await getInterviewJobPositionList()
-    // result is { data: actualArray } from worker wrapper, extract actual data
-    return { success: true, data: result?.data || [] }
+    try {
+      const { getInterviewJobPositionList } = await import('../utils/db/index')
+      const result = await getInterviewJobPositionList()
+      // result is { data: actualArray } from worker wrapper, extract actual data
+      return { success: true, data: result?.data || [] }
+    } catch (error: any) {
+      console.error('interview-get-job-list error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 获取面试岗位配置详情
   ipcMain.handle('interview-get-job-detail', async (_, id: number) => {
-    const { getInterviewJobPositionWithDetails } = await import('../utils/db/index')
-    const result = await getInterviewJobPositionWithDetails(id)
-    return { success: true, data: result?.data }
+    try {
+      const { getInterviewJobPositionWithDetails } = await import('../utils/db/index')
+      const result = await getInterviewJobPositionWithDetails(id)
+      return { success: true, data: result?.data }
+    } catch (error: any) {
+      console.error('interview-get-job-detail error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 保存面试岗位配置
@@ -728,76 +738,112 @@ export default function initIpc() {
 
   // 删除面试岗位配置
   ipcMain.handle('interview-delete-job', async (_, id: number) => {
-    const { deleteInterviewJobPosition } = await import('../utils/db/index')
-    await deleteInterviewJobPosition(id)
-    return { success: true }
+    try {
+      const { deleteInterviewJobPosition } = await import('../utils/db/index')
+      await deleteInterviewJobPosition(id)
+      return { success: true }
+    } catch (error: any) {
+      console.error('interview-delete-job error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 获取候选人列表
   ipcMain.handle('interview-get-candidates', async (_, params: any) => {
-    const { getInterviewCandidateList } = await import('../utils/db/index')
-    const result = await getInterviewCandidateList(params)
-    // result?.data is { data: array, total: number, page, pageSize } from worker
-    const actualData = result?.data || {}
-    return {
-      success: true,
-      data: {
-        list: actualData.data || [],
-        total: actualData.total || 0,
-        page: actualData.page,
-        pageSize: actualData.pageSize
+    try {
+      const { getInterviewCandidateList } = await import('../utils/db/index')
+      const result = await getInterviewCandidateList(params)
+      // result?.data is { data: array, total: number, page, pageSize } from worker
+      const actualData = result?.data || {}
+      return {
+        success: true,
+        data: {
+          list: actualData.data || [],
+          total: actualData.total || 0,
+          page: actualData.page,
+          pageSize: actualData.pageSize
+        }
       }
+    } catch (error: any) {
+      console.error('interview-get-candidates error:', error)
+      return { success: false, error: error?.message }
+    }
     }
   })
 
   // 获取候选人详情
   ipcMain.handle('interview-get-candidate-detail', async (_, id: number) => {
-    const {
-      getInterviewCandidate,
-      getInterviewQaRecordList,
-      getInterviewResume
-    } = await import('../utils/db/index')
+    try {
+      const {
+        getInterviewCandidate,
+        getInterviewQaRecordList,
+        getInterviewResume
+      } = await import('../utils/db/index')
 
-    const candidateResult = await getInterviewCandidate(id)
-    const qaResult = await getInterviewQaRecordList(id)
-    const resumeResult = await getInterviewResume(id)
+      const candidateResult = await getInterviewCandidate(id)
+      const qaResult = await getInterviewQaRecordList(id)
+      const resumeResult = await getInterviewResume(id)
 
-    return {
-      success: true,
-      data: {
-        candidate: candidateResult?.data,
-        qaRecords: qaResult?.data,
-        resume: resumeResult?.data
+      return {
+        success: true,
+        data: {
+          candidate: candidateResult?.data,
+          qaRecords: qaResult?.data,
+          resume: resumeResult?.data
+        }
       }
+    } catch (error: any) {
+      console.error('interview-get-candidate-detail error:', error)
+      return { success: false, error: error?.message }
     }
   })
 
   // 获取候选人统计数据
   ipcMain.handle('interview-get-candidate-stats', async () => {
-    const { countInterviewCandidatesByStatus } = await import('../utils/db/index')
-    const result = await countInterviewCandidatesByStatus()
-    return { success: true, data: result?.data }
+    try {
+      const { countInterviewCandidatesByStatus } = await import('../utils/db/index')
+      const result = await countInterviewCandidatesByStatus()
+      return { success: true, data: result?.data }
+    } catch (error: any) {
+      console.error('interview-get-candidate-stats error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 获取系统配置
   ipcMain.handle('interview-get-config', async (_, key: string) => {
-    const { getInterviewSystemConfig } = await import('../utils/db/index')
-    const result = await getInterviewSystemConfig(key)
-    return { success: true, data: result?.data }
+    try {
+      const { getInterviewSystemConfig } = await import('../utils/db/index')
+      const result = await getInterviewSystemConfig(key)
+      return { success: true, data: result?.data }
+    } catch (error: any) {
+      console.error('interview-get-config error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 获取所有系统配置
   ipcMain.handle('interview-get-all-config', async () => {
-    const { getAllInterviewSystemConfig } = await import('../utils/db/index')
-    const result = await getAllInterviewSystemConfig()
-    return { success: true, data: result?.data }
+    try {
+      const { getAllInterviewSystemConfig } = await import('../utils/db/index')
+      const result = await getAllInterviewSystemConfig()
+      return { success: true, data: result?.data }
+    } catch (error: any) {
+      console.error('interview-get-all-config error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 保存系统配置
   ipcMain.handle('interview-save-config', async (_, key: string, value: string) => {
-    const { saveInterviewSystemConfig } = await import('../utils/db/index')
-    await saveInterviewSystemConfig(key, value)
-    return { success: true }
+    try {
+      const { saveInterviewSystemConfig } = await import('../utils/db/index')
+      await saveInterviewSystemConfig(key, value)
+      return { success: true }
+    } catch (error: any) {
+      console.error('interview-save-config error:', error)
+      return { success: false, error: error?.message }
+    }
   })
 
   // 测试 SMTP 连接

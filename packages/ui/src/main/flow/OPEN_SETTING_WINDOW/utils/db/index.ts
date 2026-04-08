@@ -34,19 +34,37 @@ export const initDbWorker = () => {
 
 const createWorkerPromise = async (data) => {
   await initDbWorker()
+  if (!worker) {
+    throw new Error('DB worker not available')
+  }
   const uuid = randomUUID()
-  worker!.postMessage({
+  worker.postMessage({
     _uuid: uuid,
     ...data
   })
-  return new Promise((resolve) => {
-    worker!.on('message', function handler(data) {
+  return new Promise((resolve, reject) => {
+    const currentWorker = worker!
+
+    const cleanup = () => {
+      currentWorker.off('message', messageHandler)
+      currentWorker.off('exit', exitHandler)
+    }
+
+    function messageHandler(data) {
       const { _uuid, ...payload } = data ?? {}
       if (_uuid === uuid) {
+        cleanup()
         resolve(payload)
-        worker?.off('message', handler)
       }
-    })
+    }
+
+    function exitHandler(exitCode) {
+      cleanup()
+      reject(new Error(`DB worker exited with code ${exitCode}`))
+    }
+
+    currentWorker.on('message', messageHandler)
+    currentWorker.once('exit', exitHandler)
   })
 }
 

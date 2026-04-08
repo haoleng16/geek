@@ -17,6 +17,10 @@ process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err)
 })
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason)
+})
+
 console.log('argv:', process.argv)
 const commandlineArgs = minimist(isUiDev ? process.argv.slice(2) : process.argv.slice(1))
 console.log('parsed commandline args:', commandlineArgs)
