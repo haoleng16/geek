@@ -47,7 +47,12 @@ async function getDataSource(): Promise<DataSource> {
     const dbPath = getPublicDbFilePath()
     dataSourceInitPromise = initDb(dbPath)
   }
-  dataSource = await dataSourceInitPromise
+  try {
+    dataSource = await dataSourceInitPromise
+  } catch (e) {
+    dataSourceInitPromise = null
+    throw e
+  }
   return dataSource
 }
 

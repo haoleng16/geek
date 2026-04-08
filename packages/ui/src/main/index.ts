@@ -9,12 +9,12 @@ if (isUiDev || enableLogToFile) {
 }
 console.log('NODE_ENV:', process.env.NODE_ENV)
 
-// 捕获未处理的 EPIPE 错误
+// 捕获未处理的异常，记录日志而不崩溃（防止闪退）
 process.on('uncaughtException', (err) => {
   if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') {
     return
   }
-  throw err
+  console.error('[uncaughtException]', err)
 })
 
 console.log('argv:', process.argv)
