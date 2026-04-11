@@ -1,13 +1,15 @@
 import minimist from 'minimist'
-import { runCommon } from '../../features/run-common'
-import { launchDaemon } from '../OPEN_SETTING_WINDOW/launch-daemon'
 import { app, dialog } from 'electron'
 import initPublicIpc from '../../utils/initPublicIpc'
 import { connectToDaemon, sendToDaemon } from '../OPEN_SETTING_WINDOW/connect-to-daemon'
 import { checkShouldExit } from '../../utils/worker'
 import { getLastUsedAndAvailableBrowser } from '../DOWNLOAD_DEPENDENCIES/utils/browser-history'
 import { configWithBrowserAssistant } from '../../features/config-with-browser-assistant'
-import { writeStorageFile, readStorageFile, readConfigFile } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
+import {
+  writeStorageFile,
+  readStorageFile,
+  readConfigFile
+} from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
 import { AUTO_CHAT_ERROR_EXIT_CODE } from '../../../common/enums/auto-start-chat'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
 import { getPublicDbFilePath } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
@@ -19,11 +21,19 @@ import { sendMessage } from '../boss-chat-utils'
 import { sleep, sleepWithRandomDelay } from '@geekgeekrun/utils/sleep.mjs'
 import { checkCookieListFormat } from '../../../common/utils/cookie'
 import { loginWithCookieAssistant } from '../../features/login-with-cookie-assistant'
-import type { Browser } from 'puppeteer'
-import { startNewSession, getCurrentSessionId, getReplyCount, getOrCreateRecord, updateLastLlmReply } from './session-manager'
+import {
+  startNewSession,
+  getReplyCount,
+  getOrCreateRecord,
+  updateLastLlmReply
+} from './session-manager'
 import { containsSensitiveWord, isMessageTooShort } from './sensitive-words'
 import { generateSmartReply, type SmartReplyConfig } from './llm-reply'
-import { getCurrentChatGeekInfo } from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
+import {
+  getCurrentChatGeekInfo,
+  getGeekEducationInfo,
+  getGeekExperienceInfo
+} from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
 
 process.on('SIGTERM', () => {
   console.log('收到SIGTERM信号，正在退出')
@@ -37,24 +47,176 @@ export const pageMapByName: {
 let browser: null | Browser = null
 let dataSource: DataSource | null = null
 
+type SmartReplyJobConfig = {
+  jobName: string
+  jobDescription: string
+  educationFilter: string[]
+  experienceFilter: string[]
+}
+
 // 初始化数据库
 const dbInitPromise = initDb(getPublicDbFilePath())
+
+function normalizeSmartReplyJobConfigs(rawConfigs: unknown): SmartReplyJobConfig[] {
+  if (!Array.isArray(rawConfigs)) {
+    return []
+  }
+
+  return rawConfigs
+    .map((item) => {
+      const config = item as Partial<SmartReplyJobConfig>
+      return {
+        jobName: String(config.jobName ?? '').trim(),
+        jobDescription: String(config.jobDescription ?? '').trim(),
+        educationFilter: Array.isArray(config.educationFilter)
+          ? config.educationFilter.filter((value): value is string => typeof value === 'string')
+          : [],
+        experienceFilter: Array.isArray(config.experienceFilter)
+          ? config.experienceFilter.filter((value): value is string => typeof value === 'string')
+          : []
+      }
+    })
+    .filter((config) => config.jobName)
+}
 
 // 获取智能回复配置
 function getSmartReplyConfig() {
   const raw = readConfigFile('boss.json')?.smartReply ?? {}
   const scanIntervalSeconds = Number(raw.scanIntervalSeconds)
   return {
-    scanIntervalSeconds: Number.isFinite(scanIntervalSeconds) && scanIntervalSeconds > 0
-      ? Math.min(60, Math.max(1, scanIntervalSeconds))
-      : 5,
+    scanIntervalSeconds:
+      Number.isFinite(scanIntervalSeconds) && scanIntervalSeconds > 0
+        ? Math.min(60, Math.max(1, scanIntervalSeconds))
+        : 5,
     autoSend: raw.autoSend === true,
     confirmBeforeSend: raw.confirmBeforeSend !== false,
     companyIntro: String(raw.companyIntro ?? '').trim(),
-    jobDescription: String(raw.jobDescription ?? '').trim(),
     systemPrompt: String(raw.systemPrompt ?? '').trim(),
-    maxReplyCount: Math.max(1, Math.min(10, Number(raw.maxReplyCount) || 3))
+    maxReplyCount: Math.max(1, Math.min(10, Number(raw.maxReplyCount) || 3)),
+    jobConfigs: normalizeSmartReplyJobConfigs(raw.jobConfigs)
   }
+}
+
+function normalizeJobName(value: string) {
+  return String(value ?? '')
+    .replace(/\s+/g, '')
+    .toLowerCase()
+}
+
+function findMatchedJobConfig(jobName: string, jobConfigs: SmartReplyJobConfig[]) {
+  const normalizedJobName = normalizeJobName(jobName)
+  if (!normalizedJobName) {
+    return null
+  }
+
+  const exactMatch = jobConfigs.find(
+    (config) => normalizeJobName(config.jobName) === normalizedJobName
+  )
+  if (exactMatch) {
+    return exactMatch
+  }
+
+  return (
+    jobConfigs.find((config) => {
+      const normalizedConfigName = normalizeJobName(config.jobName)
+      return (
+        normalizedConfigName &&
+        (normalizedJobName.includes(normalizedConfigName) ||
+          normalizedConfigName.includes(normalizedJobName))
+      )
+    }) || null
+  )
+}
+
+function matchEducation(candidateEdu: string, filterList: string[]): boolean {
+  for (const filter of filterList) {
+    if (filter === '大专及以下') {
+      if (['高中', '中专', '技校', '大专'].includes(candidateEdu)) {
+        return true
+      }
+    } else if (filter === '硕士/研究生') {
+      if (candidateEdu === '硕士' || candidateEdu === '研究生') {
+        return true
+      }
+    } else if (candidateEdu === filter) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function matchExperience(
+  candidateExp: string,
+  isFreshGraduate: boolean,
+  graduateYear: string | null,
+  filterList: string[]
+): boolean {
+  if (isFreshGraduate && graduateYear) {
+    if (filterList.includes('25届应届生') && graduateYear === '25') {
+      return true
+    }
+    if (filterList.includes('26届应届生') && graduateYear === '26') {
+      return true
+    }
+  }
+
+  const expMatch = candidateExp.match(/^(\d+)年$|^(\d+)年以上$/)
+  const years = expMatch ? parseInt(expMatch[1] || expMatch[2]) : 0
+
+  for (const filter of filterList) {
+    if (filter.includes('应届生')) continue
+
+    if (filter === '1年及以下') {
+      if (years <= 1) return true
+    } else if (filter === '2年') {
+      if (years === 2) return true
+    } else if (filter === '3年') {
+      if (years === 3) return true
+    } else if (filter === '3年以上') {
+      if (years >= 3) return true
+    }
+  }
+
+  return false
+}
+
+function checkCandidateFilter(
+  jobConfig: SmartReplyJobConfig,
+  educationInfo: { education: string; school: string; major: string } | null,
+  experienceInfo: {
+    experience: string
+    isFreshGraduate: boolean
+    graduateYear: string | null
+  } | null
+): { passed: boolean; reason: string } {
+  if (jobConfig.educationFilter.length > 0) {
+    const candidateEdu = educationInfo?.education || ''
+    if (candidateEdu && !matchEducation(candidateEdu, jobConfig.educationFilter)) {
+      return {
+        passed: false,
+        reason: `学历不符合: 候选人学历"${candidateEdu}", 要求${jobConfig.educationFilter.join('/')}`
+      }
+    }
+  }
+
+  if (jobConfig.experienceFilter.length > 0) {
+    const candidateExp = experienceInfo?.experience || ''
+    const isFreshGraduate = experienceInfo?.isFreshGraduate || false
+    const graduateYear = experienceInfo?.graduateYear || null
+
+    if (
+      (candidateExp || isFreshGraduate) &&
+      !matchExperience(candidateExp, isFreshGraduate, graduateYear, jobConfig.experienceFilter)
+    ) {
+      return {
+        passed: false,
+        reason: `经验不符合: 候选人经验"${candidateExp || (isFreshGraduate ? `${graduateYear || ''}届应届生` : '未知')}", 要求${jobConfig.experienceFilter.join('/')}`
+      }
+    }
+  }
+
+  return { passed: true, reason: '' }
 }
 
 async function storeStorage(page) {
@@ -296,11 +458,11 @@ const mainLoop = async () => {
   const cfg = getSmartReplyConfig()
 
   // 检查配置是否完整
-  if (!cfg.companyIntro && !cfg.jobDescription) {
+  if (cfg.jobConfigs.length === 0) {
     await dialog.showMessageBox({
       type: 'warning',
       message: '配置不完整',
-      detail: '请在设置中配置公司简介和岗位说明，否则无法生成智能回复。',
+      detail: '请先在设置中至少添加一个岗位配置，否则无法判断哪些岗位需要智能回复。',
       buttons: ['退出']
     })
     process.exit(0)
@@ -348,12 +510,14 @@ const mainLoop = async () => {
   let overlayCheckCount = 0
   while (hasOverlay && overlayCheckCount < 5) {
     const overlayCheck = await pageMapByName.boss!.evaluate(() => {
-      const overlays = [...document.querySelectorAll('div')].filter(el => {
+      const overlays = [...document.querySelectorAll('div')].filter((el) => {
         const style = el.getAttribute('style') || ''
-        return style.includes('position:fixed') &&
-               style.includes('z-index') &&
-               parseInt(style.match(/z-index:\s*(\d+)/)?.[1] || '0') >= 1000 &&
-               !style.includes('pointer-events:none')
+        return (
+          style.includes('position:fixed') &&
+          style.includes('z-index') &&
+          parseInt(style.match(/z-index:\s*(\d+)/)?.[1] || '0') >= 1000 &&
+          !style.includes('pointer-events:none')
+        )
       })
       return {
         hasBlockingOverlay: overlays.length > 0,
@@ -395,12 +559,18 @@ const mainLoop = async () => {
     while (true) {
       const pageDebugInfo = await pageMapByName.boss!.evaluate(() => {
         // 检查 .user-list 内的真正的聊天项元素
-        const geekItems = document.querySelectorAll('.geek-item, .geek-item-wrap, [role="listitem"]')
+        const geekItems = document.querySelectorAll(
+          '.geek-item, .geek-item-wrap, [role="listitem"]'
+        )
 
-        const geekItemsDebug = [...geekItems].slice(0, 20).map(el => {
+        const geekItemsDebug = [...geekItems].slice(0, 20).map((el) => {
           // 找到 .geek-item 元素（可能是 el 本身或其子元素）
-          const geekItem = el.classList.contains('geek-item') ? el : el.querySelector('.geek-item') || el
-          const geekItemWrap = el.classList.contains('geek-item-wrap') ? el : el.querySelector('.geek-item-wrap') || el.closest('.geek-item-wrap')
+          const geekItem = el.classList.contains('geek-item')
+            ? el
+            : el.querySelector('.geek-item') || el
+          const geekItemWrap = el.classList.contains('geek-item-wrap')
+            ? el
+            : el.querySelector('.geek-item-wrap') || el.closest('.geek-item-wrap')
 
           return {
             className: el.className,
@@ -408,23 +578,28 @@ const mainLoop = async () => {
             keyAttr: el.getAttribute('key') || geekItem?.getAttribute('data-id'),
             hasVue: !!el.__vue__,
             hasGeekItemVue: !!geekItem?.__vue__,
-            textPreview: geekItem?.innerText?.substring(0, 100) || el.innerText?.substring(0, 100) || null,
+            textPreview:
+              geekItem?.innerText?.substring(0, 100) || el.innerText?.substring(0, 100) || null,
             // 检查 Vue props
-            vueProps: geekItem?.__vue__ ? Object.keys(geekItem.__vue__._props || geekItem.__vue__.$props || {}).slice(0, 15) : []
+            vueProps: geekItem?.__vue__
+              ? Object.keys(geekItem.__vue__._props || geekItem.__vue__.$props || {}).slice(0, 15)
+              : []
           }
         })
 
         // 检查 [role="group"] 内部结构（这是虚拟滚动的容器）
         const roleGroup = document.querySelector('[role="group"]')
-        const roleGroupDebug = roleGroup ? {
-          childCount: roleGroup.children.length,
-          children: [...roleGroup.children].slice(0, 10).map(el => ({
-            className: el.className,
-            role: el.getAttribute('role'),
-            keyAttr: el.getAttribute('key'),
-            textPreview: el.innerText?.substring(0, 80) || null
-          }))
-        } : null
+        const roleGroupDebug = roleGroup
+          ? {
+              childCount: roleGroup.children.length,
+              children: [...roleGroup.children].slice(0, 10).map((el) => ({
+                className: el.className,
+                role: el.getAttribute('role'),
+                keyAttr: el.getAttribute('key'),
+                textPreview: el.innerText?.substring(0, 80) || null
+              }))
+            }
+          : null
 
         return {
           geekItemsCount: geekItems.length,
@@ -452,13 +627,13 @@ const mainLoop = async () => {
 
       console.log('[SmartReply] 找到聊天项数量:', geekItems.length)
 
-      return [...geekItems].map(el => {
+      return [...geekItems].map((el) => {
         // 找到 .geek-item 元素
         const geekItem = el.querySelector('.geek-item') || el
 
         // 从 DOM 文本提取信息
         const textContent = geekItem?.innerText || el.innerText || ''
-        const textLines = textContent.split('\n').filter(line => line.trim())
+        const textLines = textContent.split('\n').filter((line) => line.trim())
 
         // 解析文本格式
         // 格式1（有未读数）: "1\n11:24\n刘毛印\nAI自动化开发程序员\n您好..."
@@ -496,7 +671,8 @@ const mainLoop = async () => {
         // 尝试从 Vue 组件获取数据
         const vue = geekItem.__vue__ || el.__vue__
         const props = vue?._props || vue?.$props || vue?.props || {}
-        const data = props.geek || props.item || props.message || props.user || props.data || props.row || {}
+        const data =
+          props.geek || props.item || props.message || props.user || props.data || props.row || {}
 
         // 从 DOM 结构提取头像
         const avatarEl = geekItem?.querySelector('.figure img, .avatar img, img')
@@ -526,7 +702,12 @@ const mainLoop = async () => {
       return result
     })
 
-    console.log('[SmartReply MainLoop] toCheckItemAtIndex:', toCheckItemAtIndex, 'cursorToContinueFind:', cursorToContinueFind)
+    console.log(
+      '[SmartReply MainLoop] toCheckItemAtIndex:',
+      toCheckItemAtIndex,
+      'cursorToContinueFind:',
+      cursorToContinueFind
+    )
 
     if (toCheckItemAtIndex < 0) {
       // 招聘端：暂时简化处理，等待新消息
@@ -539,11 +720,14 @@ const mainLoop = async () => {
     cursorToContinueFind = toCheckItemAtIndex
 
     const targetChat = friendListData[toCheckItemAtIndex]
-    console.log('[SmartReply MainLoop] targetChat:', JSON.stringify({
-      name: targetChat.name,
-      encryptGeekId: (targetChat as any).encryptGeekId,
-      lastText: (targetChat as any).lastText
-    }))
+    console.log(
+      '[SmartReply MainLoop] targetChat:',
+      JSON.stringify({
+        name: targetChat.name,
+        encryptGeekId: (targetChat as any).encryptGeekId,
+        lastText: (targetChat as any).lastText
+      })
+    )
 
     // 招聘端：点击对应的聊天项
     console.log('[SmartReply MainLoop] 准备点击聊天项，index:', toCheckItemAtIndex)
@@ -560,11 +744,19 @@ const mainLoop = async () => {
         if (geekItem) {
           console.log('[SmartReply] 找到 .geek-item，点击它')
           ;(geekItem as HTMLElement).click()
-          return { clicked: true, target: 'geek-item', text: geekItem.textContent?.substring(0, 50) }
+          return {
+            clicked: true,
+            target: 'geek-item',
+            text: geekItem.textContent?.substring(0, 50)
+          }
         }
 
         ;(items[index] as HTMLElement).click()
-        return { clicked: true, target: 'listitem', text: items[index].textContent?.substring(0, 50) }
+        return {
+          clicked: true,
+          target: 'listitem',
+          text: items[index].textContent?.substring(0, 50)
+        }
       }
       return { clicked: false }
     }, toCheckItemAtIndex)
@@ -580,9 +772,10 @@ const mainLoop = async () => {
       const dataLoaded = await pageMapByName.boss?.evaluate(() => {
         const noData = document.querySelector('.conversation-no-data')
         const chatConversation = document.querySelector('.chat-conversation')
-        const hasMessages = chatConversation?.innerHTML?.includes('您好') ||
-                           chatConversation?.innerHTML?.includes('你好') ||
-                           chatConversation?.innerHTML?.includes('沟通')
+        const hasMessages =
+          chatConversation?.innerHTML?.includes('您好') ||
+          chatConversation?.innerHTML?.includes('你好') ||
+          chatConversation?.innerHTML?.includes('沟通')
 
         return {
           hasNoData: !!noData,
@@ -613,7 +806,14 @@ const mainLoop = async () => {
 
       // 检查 list$ 的内容
       const list$ = vue.list$
-      console.log('[SmartReply] list$ 类型:', typeof list$, '是否数组:', Array.isArray(list$), '长度:', list$?.length)
+      console.log(
+        '[SmartReply] list$ 类型:',
+        typeof list$,
+        '是否数组:',
+        Array.isArray(list$),
+        '长度:',
+        list$?.length
+      )
 
       // 打印 list$ 的第一项（如果有）
       if (Array.isArray(list$) && list$.length > 0) {
@@ -627,7 +827,9 @@ const mainLoop = async () => {
       }
 
       // 如果 list$ 不是数组或者是空的，检查其他属性
-      const allKeys = Object.keys(vue).filter(k => !k.startsWith('_') && !k.startsWith('$') && !k.startsWith('handle'))
+      const allKeys = Object.keys(vue).filter(
+        (k) => !k.startsWith('_') && !k.startsWith('$') && !k.startsWith('handle')
+      )
       console.log('[SmartReply] Vue 所有属性:', allKeys)
 
       // 检查 $data
@@ -638,14 +840,20 @@ const mainLoop = async () => {
         for (const key of dataKeys) {
           const val = vue.$data[key]
           if (Array.isArray(val) && val.length > 0) {
-            console.log('[SmartReply] 在 $data.' + key + ' 找到数组，长度:', val.length, '第一项:', JSON.stringify(val[0]).substring(0, 200))
+            console.log(
+              '[SmartReply] 在 $data.' + key + ' 找到数组，长度:',
+              val.length,
+              '第一项:',
+              JSON.stringify(val[0]).substring(0, 200)
+            )
           }
         }
       }
 
       // 检查 innerHTML 中是否有消息内容
       const innerHTML = chatConversation.innerHTML
-      const hasMessageContent = innerHTML.includes('您好') || innerHTML.includes('你好') || innerHTML.includes('沟通')
+      const hasMessageContent =
+        innerHTML.includes('您好') || innerHTML.includes('你好') || innerHTML.includes('沟通')
       console.log('[SmartReply] innerHTML 是否包含消息内容:', hasMessageContent)
       console.log('[SmartReply] innerHTML 预览:', innerHTML.substring(0, 500))
 
@@ -663,7 +871,9 @@ const mainLoop = async () => {
       await pageMapByName.boss!.waitForResponse(
         (response) => {
           const url = response.url()
-          return url.startsWith('https://www.zhipin.com/wapi/zpchat/') && url.includes('/historyMsg')
+          return (
+            url.startsWith('https://www.zhipin.com/wapi/zpchat/') && url.includes('/historyMsg')
+          )
         },
         {
           timeout: 15 * 1000
@@ -678,60 +888,86 @@ const mainLoop = async () => {
 
     // 招聘端：获取聊天记录（适配招聘端的选择器）
     const historyMessageList =
-      (
-        await pageMapByName.boss?.evaluate(() => {
-          // 直接检查 .chat-conversation 的 Vue 组件
-          const chatConversation = document.querySelector('.chat-conversation')
-          if (chatConversation?.__vue__) {
-            const vue = chatConversation.__vue__
-            console.log('[SmartReply] .chat-conversation Vue keys:', Object.keys(vue).filter(k => !k.startsWith('_') && !k.startsWith('$')))
+      (await pageMapByName.boss?.evaluate(() => {
+        // 直接检查 .chat-conversation 的 Vue 组件
+        const chatConversation = document.querySelector('.chat-conversation')
+        if (chatConversation?.__vue__) {
+          const vue = chatConversation.__vue__
+          console.log(
+            '[SmartReply] .chat-conversation Vue keys:',
+            Object.keys(vue).filter((k) => !k.startsWith('_') && !k.startsWith('$'))
+          )
 
-            // 尝试获取消息列表
-            const possibleListKeys = ['list$', 'list', 'messages', 'messageList', 'data', 'items', 'records', 'chatList']
-            for (const key of possibleListKeys) {
-              if (vue[key] && Array.isArray(vue[key]) && vue[key].length > 0) {
-                console.log('[SmartReply] 找到消息列表:', key, '长度:', vue[key].length)
-                return vue[key]
-              }
+          // 尝试获取消息列表
+          const possibleListKeys = [
+            'list$',
+            'list',
+            'messages',
+            'messageList',
+            'data',
+            'items',
+            'records',
+            'chatList'
+          ]
+          for (const key of possibleListKeys) {
+            if (vue[key] && Array.isArray(vue[key]) && vue[key].length > 0) {
+              console.log('[SmartReply] 找到消息列表:', key, '长度:', vue[key].length)
+              return vue[key]
             }
+          }
 
-            // 检查 $data 里的属性
-            if (vue.$data) {
-              console.log('[SmartReply] Vue $data keys:', Object.keys(vue.$data))
-              for (const key of Object.keys(vue.$data)) {
-                if (Array.isArray(vue.$data[key]) && vue.$data[key].length > 0) {
-                  const firstItem = vue.$data[key][0]
-                  if (firstItem && (firstItem.text || firstItem.content || firstItem.message)) {
-                    console.log('[SmartReply] 在 $data 找到可能的消息列表:', key, '长度:', vue.$data[key].length)
-                    return vue.$data[key]
-                  }
+          // 检查 $data 里的属性
+          if (vue.$data) {
+            console.log('[SmartReply] Vue $data keys:', Object.keys(vue.$data))
+            for (const key of Object.keys(vue.$data)) {
+              if (Array.isArray(vue.$data[key]) && vue.$data[key].length > 0) {
+                const firstItem = vue.$data[key][0]
+                if (firstItem && (firstItem.text || firstItem.content || firstItem.message)) {
+                  console.log(
+                    '[SmartReply] 在 $data 找到可能的消息列表:',
+                    key,
+                    '长度:',
+                    vue.$data[key].length
+                  )
+                  return vue.$data[key]
                 }
               }
             }
           }
+        }
 
-          // 检查 .chat-conversation 内部的消息元素
-          const messageEls = chatConversation?.querySelectorAll('[class*="message"], [class*="msg"], [class*="chat-item"]')
-          console.log('[SmartReply] .chat-conversation 内消息元素数量:', messageEls?.length)
+        // 检查 .chat-conversation 内部的消息元素
+        const messageEls = chatConversation?.querySelectorAll(
+          '[class*="message"], [class*="msg"], [class*="chat-item"]'
+        )
+        console.log('[SmartReply] .chat-conversation 内消息元素数量:', messageEls?.length)
 
-          if (messageEls && messageEls.length > 0) {
-            return [...messageEls].map(el => ({
-              text: el.textContent || '',
-              isSelf: el.classList.contains('self') || el.classList.contains('is-self') || !!el.closest('[class*="self"]'),
-              className: el.className
-            }))
-          }
+        if (messageEls && messageEls.length > 0) {
+          return [...messageEls].map((el) => ({
+            text: el.textContent || '',
+            isSelf:
+              el.classList.contains('self') ||
+              el.classList.contains('is-self') ||
+              !!el.closest('[class*="self"]'),
+            className: el.className
+          }))
+        }
 
-          // 打印 .chat-conversation 的 innerHTML 前 1000 字符
-          console.log('[SmartReply] .chat-conversation innerHTML 预览:', chatConversation?.innerHTML?.substring(0, 1000))
+        // 打印 .chat-conversation 的 innerHTML 前 1000 字符
+        console.log(
+          '[SmartReply] .chat-conversation innerHTML 预览:',
+          chatConversation?.innerHTML?.substring(0, 1000)
+        )
 
-          return []
-        })
-      ) ?? []
+        return []
+      })) ?? []
 
     console.log('[SmartReply MainLoop] 历史消息数量:', historyMessageList?.length)
     if (historyMessageList?.length > 0) {
-      console.log('[SmartReply MainLoop] 最后一条消息:', JSON.stringify(historyMessageList[historyMessageList.length - 1]))
+      console.log(
+        '[SmartReply MainLoop] 最后一条消息:',
+        JSON.stringify(historyMessageList[historyMessageList.length - 1])
+      )
     }
 
     const lastMsg = historyMessageList?.[historyMessageList.length - 1]
@@ -748,18 +984,27 @@ const mainLoop = async () => {
     const geekName = geekInfo?.name || targetChat.name || ''
     const encryptJobId = geekInfo?.encryptJobId || (targetChat as any).encryptJobId || ''
     const jobName = (targetChat as any).jobName || (targetChat as any).title || ''
+    const matchedJobConfig = findMatchedJobConfig(jobName, cfg.jobConfigs)
     // 兼容不同的消息格式：可能是 text 或 content
     const candidateMessage = lastMsg.text || lastMsg.content || ''
 
     console.log('[SmartReply MainLoop] 候选人信息:', {
       encryptGeekId,
       geekName,
+      jobName,
       message: candidateMessage.substring(0, 50)
     })
 
     // 如果获取不到 encryptGeekId，跳过
     if (!encryptGeekId) {
       console.log('[SmartReply MainLoop] 无法获取候选人ID，跳过')
+      cursorToContinueFind += 1
+      await sleep(cfg.scanIntervalSeconds * 1000)
+      continue
+    }
+
+    if (!matchedJobConfig) {
+      console.log('[SmartReply MainLoop] 当前岗位未配置智能回复，跳过:', jobName)
       cursorToContinueFind += 1
       await sleep(cfg.scanIntervalSeconds * 1000)
       continue
@@ -789,6 +1034,17 @@ const mainLoop = async () => {
       continue
     }
 
+    const educationInfo = await getGeekEducationInfo(pageMapByName.boss!)
+    const experienceInfo = await getGeekExperienceInfo(pageMapByName.boss!)
+    const filterResult = checkCandidateFilter(matchedJobConfig, educationInfo, experienceInfo)
+
+    if (!filterResult.passed) {
+      console.log('[SmartReply MainLoop] 候选人未通过岗位筛选，跳过:', filterResult.reason)
+      cursorToContinueFind += 1
+      await sleep(cfg.scanIntervalSeconds * 1000)
+      continue
+    }
+
     // 检查回复次数
     const replyCount = await getReplyCount(dataSource!, sessionId, encryptGeekId)
     console.log('[SmartReply MainLoop] 当前回复次数:', replyCount, '最大次数:', cfg.maxReplyCount)
@@ -803,7 +1059,8 @@ const mainLoop = async () => {
     // 调用LLM生成回复
     const llmConfig: SmartReplyConfig = {
       companyIntro: cfg.companyIntro,
-      jobDescription: cfg.jobDescription,
+      jobName: jobName || matchedJobConfig.jobName,
+      jobDescription: matchedJobConfig.jobDescription,
       systemPrompt: cfg.systemPrompt
     }
 
@@ -821,10 +1078,11 @@ const mainLoop = async () => {
     await sleepWithRandomDelay(1000, 3000)
 
     // 发送或确认
+    let sendSuccess = false
     if (cfg.autoSend) {
       // 自动发送
       console.log('[SmartReply MainLoop] 自动发送回复:', llmResult.reply.substring(0, 50))
-      await sendMessage(pageMapByName.boss!, llmResult.reply)
+      sendSuccess = await sendMessage(pageMapByName.boss!, llmResult.reply)
     } else {
       // 弹窗确认
       const res = await dialog.showMessageBox({
@@ -849,7 +1107,21 @@ const mainLoop = async () => {
 
       // 发送
       console.log('[SmartReply MainLoop] 用户确认发送回复')
-      await sendMessage(pageMapByName.boss!, llmResult.reply)
+      sendSuccess = await sendMessage(pageMapByName.boss!, llmResult.reply)
+    }
+
+    if (!sendSuccess) {
+      console.error('[SmartReply MainLoop] 消息发送失败，未写入回复记录')
+      if (!cfg.autoSend) {
+        await dialog.showMessageBox({
+          type: 'error',
+          message: '发送失败',
+          detail: '未能将内容写入输入框或触发发送，请查看日志后重试。'
+        })
+      }
+      cursorToContinueFind += 1
+      await sleep(cfg.scanIntervalSeconds * 1000)
+      continue
     }
 
     // 保存回复记录
@@ -915,7 +1187,10 @@ export async function runEntry() {
 
   console.log('[SmartReply runEntry] 正在检查浏览器...')
   let puppeteerExecutable = await getLastUsedAndAvailableBrowser()
-  console.log('[SmartReply runEntry] 浏览器检查结果:', puppeteerExecutable ? puppeteerExecutable.executablePath : 'null')
+  console.log(
+    '[SmartReply runEntry] 浏览器检查结果:',
+    puppeteerExecutable ? puppeteerExecutable.executablePath : 'null'
+  )
 
   if (!puppeteerExecutable) {
     console.log('[SmartReply runEntry] 未找到浏览器，尝试自动配置...')
@@ -926,7 +1201,10 @@ export async function runEntry() {
       console.error('[SmartReply runEntry] 浏览器配置失败:', e)
     }
     puppeteerExecutable = await getLastUsedAndAvailableBrowser()
-    console.log('[SmartReply runEntry] 再次检查浏览器:', puppeteerExecutable ? puppeteerExecutable.executablePath : 'null')
+    console.log(
+      '[SmartReply runEntry] 再次检查浏览器:',
+      puppeteerExecutable ? puppeteerExecutable.executablePath : 'null'
+    )
   }
   if (!puppeteerExecutable) {
     console.error('[SmartReply runEntry] 未找到可用的浏览器')
@@ -960,7 +1238,10 @@ export async function runEntry() {
     }
   })
   process.env.PUPPETEER_EXECUTABLE_PATH = puppeteerExecutable.executablePath
-  console.log('[SmartReply runEntry] PUPPETEER_EXECUTABLE_PATH:', process.env.PUPPETEER_EXECUTABLE_PATH)
+  console.log(
+    '[SmartReply runEntry] PUPPETEER_EXECUTABLE_PATH:',
+    process.env.PUPPETEER_EXECUTABLE_PATH
+  )
 
   // 初始化数据库
   console.log('[SmartReply runEntry] 正在初始化数据库...')

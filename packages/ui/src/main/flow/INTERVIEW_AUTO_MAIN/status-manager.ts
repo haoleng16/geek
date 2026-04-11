@@ -214,6 +214,7 @@ export function getStatusDisplayText(status: string): string {
     [InterviewCandidateStatus.WAITING_ROUND_1]: '等待第1轮回复',
     [InterviewCandidateStatus.WAITING_ROUND_2]: '等待第2轮回复',
     [InterviewCandidateStatus.WAITING_ROUND_N]: '等待回复中',
+    [InterviewCandidateStatus.REPLY_EXTRACTION_FAILED]: '回复提取失败',
     [InterviewCandidateStatus.PASSED]: '已通过',
     [InterviewCandidateStatus.REJECTED]: '已拒绝',
     [InterviewCandidateStatus.RESUME_REQUESTED]: '已发送简历邀请',
@@ -245,7 +246,8 @@ export function isWaitingStatus(status: string): boolean {
   const waitingStatuses = [
     InterviewCandidateStatus.WAITING_ROUND_1,
     InterviewCandidateStatus.WAITING_ROUND_2,
-    InterviewCandidateStatus.WAITING_ROUND_N
+    InterviewCandidateStatus.WAITING_ROUND_N,
+    InterviewCandidateStatus.REPLY_EXTRACTION_FAILED
   ]
 
   return waitingStatuses.includes(status)

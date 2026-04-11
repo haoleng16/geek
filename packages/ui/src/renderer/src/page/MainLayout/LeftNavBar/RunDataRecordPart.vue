@@ -3,6 +3,7 @@
     <div class="group-title">运行数据</div>
     <div flex flex-col class="link-list">
       <RouterLink to="./SmartReplyData">智能回复数据</RouterLink>
+      <RouterLink to="./RecommendTalentData">推荐牛人数据</RouterLink>
       <RouterLink to="./InterviewCandidateList">
         候选人看板
         <el-tooltip placement="right" :enterable="false">

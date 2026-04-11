@@ -173,6 +173,10 @@ function handleMessage(socket, message) {
         args,
         env
       } = message
+      if (stoppedWorkers.has(workerId)) {
+        stoppedWorkers.delete(workerId);
+        console.log(`工具进程 ${workerId} 启动前清理停止标记`);
+      }
       if (workers.has(workerId)) {
         console.log(`工具进程 ${workerId} 已在运行`);
         return;

@@ -3,7 +3,7 @@ import { daemonEE, sendToDaemon } from '../flow/OPEN_SETTING_WINDOW/connect-to-d
 import { saveAndGetCurrentRunRecord } from '../flow/OPEN_SETTING_WINDOW/utils/db'
 import minimist from 'minimist'
 
-export async function runCommon({ mode }) {
+export async function runCommon({ mode, extraEnv = {} }) {
   await sendToDaemon(
     {
       type: 'user-process-register'
@@ -35,6 +35,7 @@ export async function runCommon({ mode }) {
   const currentRunRecord = (await saveAndGetCurrentRunRecord())?.data
   const subProcessEnv = {
     ...process.env,
+    ...extraEnv,
     GEEKGEEKRUND_NO_AUTO_RESTART_EXIT_CODE: [
       AUTO_CHAT_ERROR_EXIT_CODE.PUPPETEER_IS_NOT_EXECUTABLE,
       AUTO_CHAT_ERROR_EXIT_CODE.LOGIN_STATUS_INVALID,

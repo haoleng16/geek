@@ -266,7 +266,7 @@ export function deduplicateSentencesInText(text: string): string {
 
   const allSentences: string[] = []
   for (const line of lines) {
-    const parts = {line}.split(sentenceEndPattern) as string[]
+    const parts = line.split(sentenceEndPattern) as string[]
     let currentSentence = ''
     for (let i = 0; i < parts.length; i++) {
       currentSentence += parts[i]
@@ -329,7 +329,7 @@ export async function isDuplicateAnswer(
     return false
   } catch (error) {
     console.error('[AnswerCollector] 检查重复回答失败:', error)
-    return false
+    return false 
   }
 }
 
@@ -437,14 +437,22 @@ export async function getLatestCandidateAnswer(
 
     for (let i = history.length - 1; i >= 0; i--) {
       const msg = history[i]
-      const isSelf = msg.isSelf || msg.self || msg.fromSelf
+      const isSelf = isSelfMessage(msg)
 
       if (!isSelf) {
         const text = msg.text || msg.content || msg.message || ''
-        if (text.trim()) {
+        const cleanedText = cleanCandidateAnswer(text.trim())
+        if (cleanedText) {
+          let timestamp = new Date()
+          if (msg._source === 'dom' && msg.time) {
+            timestamp = parseBossTime(msg.time) || new Date()
+          } else if (msg.time) {
+            timestamp = new Date(msg.time)
+          }
+
           return {
-            text: text.trim(),
-            timestamp: msg.time ? new Date(msg.time) : new Date(),
+            text: cleanedText,
+            timestamp,
             roundNumber: candidate.currentRound
           }
         }

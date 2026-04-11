@@ -6,8 +6,6 @@
 
 import minimist from 'minimist'
 import { app, dialog } from 'electron'
-import * as path from 'path'
-import * as fs from 'fs'
 import initPublicIpc from '../../utils/initPublicIpc'
 import { connectToDaemon, sendToDaemon } from '../OPEN_SETTING_WINDOW/connect-to-daemon'
 import { initInterviewIpcHandlers } from './ipc-handlers'
@@ -29,13 +27,13 @@ import { getCurrentChatGeekInfo, getGeekEducationInfo, getGeekExperienceInfo } f
 import { sendMessage } from '../boss-chat-utils'
 
 // 导入面试模块
-import { matchJobPositionByName, matchJobPositionById } from './job-matcher'
-import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest, sendRejectionMessage } from './question-sender'
-import { getLatestCandidateAnswer, saveCandidateAnswer, mergeMessagesInWindow, deduplicateSentencesInText, isDuplicateAnswer } from './answer-collector'
-import { scoreAnswer, saveScoreResult } from './scorer'
-import { detectResumeSent, downloadResume, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
-import { sendResumeEmail, startEmailScheduler, getCandidatesByStatus } from './email-sender'
-import { isAnswerTimeout, shouldSendNextRound } from './status-manager'
+import { matchJobPositionByName } from './job-matcher'
+import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest } from './question-sender'
+import { getLatestCandidateAnswer, mergeMessagesInWindow, deduplicateSentencesInText, isDuplicateAnswer } from './answer-collector'
+import { scoreAnswer } from './scorer'
+import { detectResumeSent, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
+import { sendResumeEmail } from './email-sender'
+import { shouldSendNextRound } from './status-manager'
 import { randomDelay, canSendMessage, recordMessageSent, getRiskControlConfig, isWithinWorkHours } from './risk-control'
 import {
   saveInterviewCandidate,
@@ -43,8 +41,7 @@ import {
   getInterviewJobPositionWithDetails,
   updateInterviewCandidateStatus,
   getInterviewQaRecordList,
-  saveInterviewOperationLog,
-  getPendingInterviewCandidates
+  saveInterviewOperationLog
 } from '@geekgeekrun/sqlite-plugin/handlers'
 import { InterviewCandidateStatus } from '@geekgeekrun/sqlite-plugin/entity/InterviewCandidate'
 import type { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/entity/InterviewCandidate'
@@ -391,22 +388,7 @@ const mainLoop = async () => {
         await randomDelay()
       }
 
-      // 【新增】处理完未读消息后，遍历已请求简历的候选人检查简历
-      console.log('[Interview MainLoop] ========================================')
-      console.log('[Interview MainLoop] 处理完未读消息，开始检查待下载简历...')
-      console.log('[Interview MainLoop] ========================================')
-      await checkAndDownloadPendingResumes(dataSource!, pageMapByName.boss!)
-      console.log('[Interview MainLoop] 简历检查完成')
-
-      // 【关键修复】主动检查等待回复的候选人（不依赖未读角标）
-      // 解决问题：如果未读角标被清除，候选人不会出现在 unreadItems 中，导致回答不被收集
-      console.log('[Interview MainLoop] ========================================')
-      console.log('[Interview MainLoop] 开始主动检查等待回复的候选人...')
-      console.log('[Interview MainLoop] ========================================')
-      await checkWaitingCandidatesForReply(dataSource!, pageMapByName.boss!, cfg)
-      console.log('[Interview MainLoop] 等待回复候选人检查完成，等待下一轮扫描...')
-
-      // 等待下一轮扫描
+      console.log('[Interview MainLoop] 当前未读消息处理完成，等待下一轮扫描...')
       await sleep(cfg.scanIntervalSeconds * 1000)
 
     } catch (error) {
@@ -445,6 +427,7 @@ async function handleCandidateByStatus(
     case InterviewCandidateStatus.WAITING_ROUND_1:
     case InterviewCandidateStatus.WAITING_ROUND_2:
     case InterviewCandidateStatus.WAITING_ROUND_N:
+    case InterviewCandidateStatus.REPLY_EXTRACTION_FAILED:
       // 【关键修复1】先检查候选人是否刚被评分过，避免重复进入评分流程
       // 如果 lastScoredAt 在最近30秒内，说明刚评分过，跳过
       if (candidate.lastScoredAt) {
@@ -470,14 +453,40 @@ async function handleCandidateByStatus(
       }
 
       // 合并30秒窗口内的消息
-      const { mergedText: rawMergedText } = await mergeMessagesInWindow(page, candidate, 30)
-      if (!rawMergedText) {
-        console.log('[Interview MainLoop] 未找到候选人回复内容')
+      let { mergedText } = await mergeMessagesInWindow(page, candidate, 30)
+      if (!mergedText) {
+        console.log('[Interview MainLoop] 30秒窗口未提取到有效回复，尝试回退到最新一条候选人消息')
+
+        const latestAnswer = await getLatestCandidateAnswer(page, candidate)
+        if (latestAnswer?.text) {
+          mergedText = latestAnswer.text
+          console.log('[Interview MainLoop] 已使用最新一条候选人消息作为评分输入:', mergedText.substring(0, 100))
+        }
+      }
+
+      if (!mergedText) {
+        console.log('[Interview MainLoop] 未找到候选人回复内容，保留等待状态，等待下次轮询')
+        if (candidate.status !== InterviewCandidateStatus.REPLY_EXTRACTION_FAILED) {
+          await updateInterviewCandidateStatus(
+            ds,
+            candidate.id!,
+            InterviewCandidateStatus.REPLY_EXTRACTION_FAILED
+          )
+        }
+        await saveInterviewOperationLog(ds, {
+          candidateId: candidate.id,
+          action: 'reply_detected_but_not_extracted',
+          detail: JSON.stringify({
+            currentRound: candidate.currentRound,
+            lastQuestionAt: candidate.lastQuestionAt,
+            lastScoredAt: candidate.lastScoredAt
+          })
+        })
         break
       }
 
       // 【新增】对回答文本内部重复句子进行去重
-      const mergedText = deduplicateSentencesInText(rawMergedText)
+      mergedText = deduplicateSentencesInText(mergedText)
       console.log('[Interview MainLoop] 合并回复(去重后):', mergedText.substring(0, 100))
 
       // 【新增】检查是否与已有记录重复（同一问题相同回答）
@@ -561,8 +570,7 @@ async function handleCandidateByStatus(
           }
         }
       } else {
-        // 未通过，发送拒绝消息
-        await sendRejectionMessage(ds, page, candidate)
+        // 未通过，静默标记为已拒绝，不发送消息
         await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.REJECTED)
       }
       break
@@ -1002,295 +1010,6 @@ export async function runEntry() {
   }
 
   process.exit(0)
-}
-
-/**
- * 【新增】检查并下载待处理的简历
- * 遍历已请求简历的候选人（RESUME_REQUESTED 或 RESUME_AGREED 状态）
- * 检查本地文件是否已有简历，如果没有则尝试下载
- */
-async function checkAndDownloadPendingResumes(
-  ds: DataSource,
-  page: Page
-): Promise<void> {
-  try {
-    console.log('[ResumeCheck] ========================================')
-    console.log('[ResumeCheck] 开始查询待处理简历的候选人...')
-    console.log('[ResumeCheck] 查询条件: status = RESUME_REQUESTED 或 RESUME_AGREED')
-
-    // 查询状态为 RESUME_REQUESTED 或 RESUME_AGREED 的候选人
-    const candidateRepo = ds.getRepository('InterviewCandidate')
-    const pendingCandidates = await candidateRepo.find({
-      where: [
-        { status: InterviewCandidateStatus.RESUME_REQUESTED },
-        { status: InterviewCandidateStatus.RESUME_AGREED }
-      ],
-      order: { updatedAt: 'ASC' }
-    })
-
-    if (!pendingCandidates || pendingCandidates.length === 0) {
-      console.log('[ResumeCheck] 查询结果: 没有待处理简历的候选人')
-      console.log('[ResumeCheck] ========================================')
-      return
-    }
-
-    console.log(`[ResumeCheck] 查询结果: 找到 ${pendingCandidates.length} 个待处理简历的候选人`)
-    pendingCandidates.forEach((c, i) => {
-      console.log(`[ResumeCheck]   ${i + 1}. ${c.geekName} (状态: ${c.status})`)
-    })
-    console.log('[ResumeCheck] ========================================')
-
-    // 获取简历存储目录
-    const resumeDir = path.join(app.getPath('userData'), 'interview-resumes')
-    console.log(`[ResumeCheck] 简历存储目录: ${resumeDir}`)
-
-    for (const candidate of pendingCandidates) {
-      console.log(`[ResumeCheck] ----------------------------------------`)
-      console.log(`[ResumeCheck] 处理候选人: ${candidate.geekName} (ID: ${candidate.encryptGeekId})`)
-      console.log(`[ResumeCheck] 当前状态: ${candidate.status}`)
-
-      // 检查本地文件是否已有简历
-      const existingFiles = fs.readdirSync(resumeDir).filter(f =>
-        f.includes(candidate.geekName) ||
-        (candidate.encryptGeekId && f.includes(candidate.encryptGeekId))
-      )
-
-      if (existingFiles.length > 0) {
-        console.log(`[ResumeCheck] 本地已有简历文件: ${existingFiles.join(', ')}`)
-        console.log(`[ResumeCheck] 跳过下载，继续下一个候选人`)
-        continue
-      }
-
-      console.log(`[ResumeCheck] 本地无简历文件，开始查找聊天...`)
-
-      // 在聊天列表中找到该候选人
-      console.log(`[ResumeCheck] 正在获取聊天列表...`)
-      const chatList = await getChatList(page)
-      console.log(`[ResumeCheck] 聊天列表数量: ${chatList?.length || 0}`)
-
-      const targetChat = chatList?.find(item =>
-        item.name === candidate.geekName ||
-        (candidate.encryptGeekId && item.encryptGeekId === candidate.encryptGeekId)
-      )
-
-      if (!targetChat) {
-        console.log(`[ResumeCheck] 未在聊天列表中找到候选人 ${candidate.geekName}`)
-        console.log(`[ResumeCheck] 可能原因: 聊天列表未加载完全或候选人不在列表中`)
-        continue
-      }
-
-      console.log(`[ResumeCheck] 找到聊天项，准备点击进入...`)
-
-      // 点击进入聊天
-      await clickChatItemByIdentifier(page, targetChat)
-      await sleep(2000)
-
-      console.log(`[ResumeCheck] 已进入聊天，检测简历消息...`)
-
-      // 检测是否有简历消息
-      const resumeDetection = await detectResumeSent(page)
-      console.log(`[ResumeCheck] 简历检测结果: hasResume=${resumeDetection.hasResume}, resumeUrl=${resumeDetection.resumeUrl ? '有' : '无'}`)
-
-      if (resumeDetection.hasResume) {
-        console.log(`[ResumeCheck] ★★★ 检测到简历消息！开始下载... ★★★`)
-
-        if (resumeDetection.resumeUrl) {
-          // 下载简历
-          console.log(`[ResumeCheck] 使用URL下载简历...`)
-          const resumePath = await downloadResume(ds, page, candidate, resumeDetection.resumeUrl)
-          if (resumePath) {
-            console.log(`[ResumeCheck] ★★★ 简历下载成功: ${resumePath} ★★★`)
-          } else {
-            console.log(`[ResumeCheck] 简历下载失败`)
-          }
-        } else {
-          // 没有直接的下载链接，尝试点击简历卡片下载
-          console.log(`[ResumeCheck] 没有直接URL，尝试点击简历卡片下载...`)
-          const downloaded = await tryDownloadResumeFromCard(page, candidate, ds)
-          if (downloaded) {
-            console.log(`[ResumeCheck] ★★★ 通过点击简历卡片下载成功 ★★★`)
-          } else {
-            console.log(`[ResumeCheck] 点击简历卡片下载失败`)
-          }
-        }
-      } else {
-        console.log(`[ResumeCheck] 候选人尚未发送简历，继续等待...`)
-      }
-
-      // 风控延迟
-      console.log(`[ResumeCheck] 等待风控延迟...`)
-      await randomDelay()
-    }
-
-    console.log('[ResumeCheck] ========================================')
-    console.log('[ResumeCheck] 所有待处理简历检查完成')
-    console.log('[ResumeCheck] ========================================')
-  } catch (error) {
-    console.error('[ResumeCheck] 检查待处理简历失败:', error)
-  }
-}
-
-/**
- * 【关键修复】主动检查等待回复的候选人
- * 不依赖未读角标机制，直接查询数据库中的 WAITING 状态候选人
- * 解决问题：如果未读角标被清除，候选人不会出现在 unreadItems 中，导致回答不被收集
- */
-async function checkWaitingCandidatesForReply(
-  ds: DataSource,
-  page: Page,
-  config: any
-): Promise<void> {
-  try {
-    console.log('[WaitingCheck] 查询状态为 WAITING 的候选人...')
-
-    // 查询状态为 WAITING 的候选人
-    const waitingCandidates = await getPendingInterviewCandidates(ds, [
-      InterviewCandidateStatus.WAITING_ROUND_1,
-      InterviewCandidateStatus.WAITING_ROUND_2,
-      InterviewCandidateStatus.WAITING_ROUND_N
-    ])
-
-    if (!waitingCandidates || waitingCandidates.length === 0) {
-      console.log('[WaitingCheck] 查询结果: 没有等待回复的候选人')
-      console.log('[WaitingCheck] ========================================')
-      return
-    }
-
-    console.log(`[WaitingCheck] 查询结果: 找到 ${waitingCandidates.length} 个等待回复的候选人`)
-    waitingCandidates.forEach((c, i) => {
-      console.log(`[WaitingCheck]   ${i + 1}. ${c.geekName} (状态: ${c.status}, 当前轮次: ${c.currentRound})`)
-    })
-    console.log('[WaitingCheck] ========================================')
-
-    // 获取聊天列表
-    console.log('[WaitingCheck] 正在获取聊天列表...')
-    const chatList = await getChatList(page)
-    console.log(`[WaitingCheck] 聊天列表数量: ${chatList?.length || 0}`)
-
-    for (const candidate of waitingCandidates) {
-      console.log(`[WaitingCheck] ----------------------------------------`)
-      console.log(`[WaitingCheck] 处理候选人: ${candidate.geekName} (ID: ${candidate.encryptGeekId})`)
-      console.log(`[WaitingCheck] 当前状态: ${candidate.status}, 当前轮次: ${candidate.currentRound}`)
-
-      // 检查候选人是否刚被评分过，避免重复处理（30秒内评分过的跳过）
-      if (candidate.lastScoredAt) {
-        const lastScoredTime = new Date(candidate.lastScoredAt).getTime()
-        const now = Date.now()
-        const thirtySecondsAgo = now - 30 * 1000
-        if (lastScoredTime >= thirtySecondsAgo) {
-          console.log(`[WaitingCheck] 候选人刚在 ${Math.round((now - lastScoredTime) / 1000)} 秒前被评分过，跳过`)
-          continue
-        }
-      }
-
-      // 在聊天列表中查找该候选人
-      const targetChat = chatList?.find(item =>
-        item.name === candidate.geekName ||
-        (candidate.encryptGeekId && item.encryptGeekId === candidate.encryptGeekId)
-      )
-
-      if (!targetChat) {
-        console.log(`[WaitingCheck] 未在聊天列表中找到候选人 ${candidate.geekName}`)
-        // 尝试滚动加载更多聊天项
-        continue
-      }
-
-      console.log(`[WaitingCheck] 找到聊天项，准备点击进入...`)
-
-      // 点击进入聊天
-      await clickChatItemByIdentifier(page, targetChat)
-      await sleep(2000)
-
-      // 获取岗位配置
-      const jobPosition = await getInterviewJobPositionWithDetails(ds, candidate.jobPositionId)
-      if (!jobPosition) {
-        console.log(`[WaitingCheck] 未找到岗位配置 (jobPositionId: ${candidate.jobPositionId})，跳过`)
-        continue
-      }
-
-      // 调用 handleCandidateByStatus 检查是否有新回复
-      console.log(`[WaitingCheck] 调用 handleCandidateByStatus 检查回复...`)
-      await handleCandidateByStatus(ds, page, candidate, jobPosition, config)
-
-      // 风控延迟
-      console.log(`[WaitingCheck] 等待风控延迟...`)
-      await randomDelay()
-    }
-
-    console.log('[WaitingCheck] ========================================')
-    console.log('[WaitingCheck] 所有等待回复候选人检查完成')
-    console.log('[WaitingCheck] ========================================')
-  } catch (error) {
-    console.error('[WaitingCheck] 检查等待回复候选人失败:', error)
-  }
-}
-
-/**
- * 尝试通过点击简历卡片下载简历
- */
-async function tryDownloadResumeFromCard(
-  page: Page,
-  candidate: any,
-  ds: DataSource
-): Promise<boolean> {
-  try {
-    console.log(`[ResumeCard] 尝试点击简历卡片下载...`)
-
-    const clicked = await page.evaluate(() => {
-      const chatConversation = document.querySelector('.chat-conversation')
-
-      // 查找简历卡片
-      const resumeCardSelectors = [
-        '[class*="resume-card"]',
-        '[class*="resume-message"]',
-        '[class*="attachment"]',
-        '[class*="file-card"]'
-      ]
-
-      for (const selector of resumeCardSelectors) {
-        const elements = chatConversation?.querySelectorAll(selector)
-        if (elements && elements.length > 0) {
-          // 点击最后一个（最新的）简历卡片
-          const lastElement = elements[elements.length - 1] as HTMLElement
-          lastElement.click()
-          return true
-        }
-      }
-
-      return false
-    })
-
-    if (clicked) {
-      console.log(`[ResumeCard] 已点击简历卡片，等待下载...`)
-      await sleep(3000)
-
-      // 检查是否有下载的文件
-      const resumeDir = path.join(app.getPath('userData'), 'interview-resumes')
-      const files = fs.readdirSync(resumeDir).filter(f =>
-        f.includes(candidate.geekName) ||
-        f.endsWith('.pdf') ||
-        f.endsWith('.doc') ||
-        f.endsWith('.docx')
-      )
-
-      if (files.length > 0) {
-        console.log(`[ResumeCard] 检测到下载的文件: ${files.join(', ')}`)
-        // 更新候选人状态
-        await updateInterviewCandidateStatus(ds, candidate.id, InterviewCandidateStatus.RESUME_RECEIVED)
-        console.log(`[ResumeCard] 已更新候选人状态为 RESUME_RECEIVED`)
-        return true
-      } else {
-        console.log(`[ResumeCard] 未检测到下载的文件`)
-      }
-    } else {
-      console.log(`[ResumeCard] 未找到可点击的简历卡片`)
-    }
-
-    return false
-  } catch (error) {
-    console.error('[ResumeCard] 点击简历卡片失败:', error)
-    return false
-  }
 }
 
 /**

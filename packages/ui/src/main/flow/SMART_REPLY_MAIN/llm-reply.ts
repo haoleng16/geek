@@ -12,12 +12,13 @@ import type { ChatMessage } from '../RECRUITER_AUTO_REPLY_MAIN/llm-reply'
 
 export interface SmartReplyConfig {
   companyIntro: string //公司介绍
-  jobDescription: string //职位描述
-  systemPrompt?: string//系统提示词
+  jobName?: string // 当前岗位名称
+  jobDescription?: string // 当前岗位描述
+  systemPrompt?: string //系统提示词
 }
 
 export interface LlmResponse {
-  reply: string   //大模型的回复
+  reply: string //大模型的回复
   isClear: boolean //大模型是否清楚该回答
 }
 
@@ -36,7 +37,10 @@ export const DEFAULT_SYSTEM_PROMPT = `你是一个专业的招聘助手，代表
 ## 公司信息
 {COMPANY_INTRO}
 
-## 岗位说明
+## 当前岗位
+{JOB_NAME}
+
+## 岗位描述
 {JOB_DESCRIPTION}
 
 ## 回复规则
@@ -78,13 +82,14 @@ export async function getLlmConfig(): Promise<LlmConfig | null> {
  */
 export async function generateSmartReply(
   config: SmartReplyConfig,
-  historyMessages: any[],  // 使用 any 类型，因为从页面获取的消息格式可能不同
+  historyMessages: any[], // 使用 any 类型，因为从页面获取的消息格式可能不同
   candidateMessage: string
 ): Promise<LlmResponse> {
   try {
     console.log('[SmartReply] generateSmartReply 开始执行')
     console.log('[SmartReply] 配置:', {
       hasCompanyIntro: !!config.companyIntro,
+      hasJobName: !!config.jobName,
       hasJobDescription: !!config.jobDescription,
       hasSystemPrompt: !!config.systemPrompt
     })
@@ -106,12 +111,11 @@ export async function generateSmartReply(
     // 构建系统提示词
     const systemPrompt = (config.systemPrompt || DEFAULT_SYSTEM_PROMPT)
       .replace('{COMPANY_INTRO}', config.companyIntro || '（未配置）')
+      .replace('{JOB_NAME}', config.jobName || '（未配置）')
       .replace('{JOB_DESCRIPTION}', config.jobDescription || '（未配置）')
 
     // 构建消息列表
-    const messages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt }
-    ]
+    const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
 
     // 添加最近5条历史消息
     const recentHistory = historyMessages.slice(-5)
@@ -127,7 +131,10 @@ export async function generateSmartReply(
     messages.push({ role: 'user', content: candidateMessage })
 
     console.log('[SmartReply] 调用LLM, 消息数量:', messages.length)
-    console.log('[SmartReply] 消息列表:', messages.map(m => ({ role: m.role, content: m.content?.substring(0, 30) })))
+    console.log(
+      '[SmartReply] 消息列表:',
+      messages.map((m) => ({ role: m.role, content: m.content?.substring(0, 30) }))
+    )
 
     // 调用LLM
     console.log('[SmartReply] 正在调用 completes 函数...')
@@ -240,9 +247,7 @@ export async function testLlmConnection(): Promise<{
     }
 
     // 发送简单的测试消息
-    const testMessages: ChatMessage[] = [
-      { role: 'user', content: '请回复"OK"两个字' }
-    ]
+    const testMessages: ChatMessage[] = [{ role: 'user', content: '请回复"OK"两个字' }]
 
     console.log('[SmartReply] 正在调用 API...')
 
@@ -278,13 +283,25 @@ export async function testLlmConnection(): Promise<{
     if (error?.message) {
       errorMessage = error.message
       // 处理常见错误
-      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized') || errorMessage.includes('invalid_api_key')) {
+      if (
+        errorMessage.includes('401') ||
+        errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('invalid_api_key')
+      ) {
         errorMessage = 'API Key 无效或已过期'
       } else if (errorMessage.includes('404') || errorMessage.includes('not_found')) {
         errorMessage = 'API URL 不正确或模型不存在'
-      } else if (errorMessage.includes('ETIMEDOUT') || errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND')) {
+      } else if (
+        errorMessage.includes('ETIMEDOUT') ||
+        errorMessage.includes('ECONNREFUSED') ||
+        errorMessage.includes('ENOTFOUND')
+      ) {
         errorMessage = '网络连接失败，请检查网络或代理设置'
-      } else if (errorMessage.includes('insufficient_quota') || errorMessage.includes('429') || errorMessage.includes('rate_limit')) {
+      } else if (
+        errorMessage.includes('insufficient_quota') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('rate_limit')
+      ) {
         errorMessage = 'API 配额不足或请求过于频繁'
       } else if (errorMessage.includes('model')) {
         errorMessage = '模型不存在或不可用: ' + errorMessage

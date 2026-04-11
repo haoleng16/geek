@@ -5,7 +5,7 @@
  */
 
 import { Page } from 'puppeteer'
-import { sleep, sleepWithRandomDelay } from '@geekgeekrun/utils/sleep.mjs'
+import { sleep } from '@geekgeekrun/utils/sleep.mjs'
 
 // ==================== 类型定义 ====================
 
@@ -282,7 +282,7 @@ async function verifyMessageSent(page: Page, text: string): Promise<boolean> {
  */
 export async function markCandidateNotSuitable(
   page: Page,
-  reason?: string
+  _reason?: string
 ): Promise<boolean> {
   try {
     // 查找"不合适"按钮
@@ -329,6 +329,7 @@ export async function markCandidateNotSuitable(
 export async function getCurrentChatGeekInfo(page: Page): Promise<{
   name: string
   encryptGeekId: string
+  encryptJobId: string
 } | null> {
   try {
     const info = await page.evaluate(() => {
@@ -339,7 +340,8 @@ export async function getCurrentChatGeekInfo(page: Page): Promise<{
       if (geek) {
         return {
           name: geek.name || '',
-          encryptGeekId: geek.encryptGeekId || geek.encryptBossId || ''
+          encryptGeekId: geek.encryptGeekId || geek.encryptBossId || '',
+          encryptJobId: geek.encryptJobId || ''
         }
       }
 
@@ -347,7 +349,7 @@ export async function getCurrentChatGeekInfo(page: Page): Promise<{
       const nameEl = document.querySelector('.chat-conversation .user-name, .geek-name')
       const name = nameEl?.textContent?.trim() || ''
 
-      return { name, encryptGeekId: '' }
+      return { name, encryptGeekId: '', encryptJobId: '' }
     })
 
     return info

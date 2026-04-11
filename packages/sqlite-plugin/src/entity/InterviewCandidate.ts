@@ -10,6 +10,7 @@ export enum InterviewCandidateStatus {
   WAITING_ROUND_1 = 'waiting_round_1',   // 等待第1轮回复
   WAITING_ROUND_2 = 'waiting_round_2',   // 等待第2轮回复
   WAITING_ROUND_N = 'waiting_round_n',   // 等待第N轮回复
+  REPLY_EXTRACTION_FAILED = 'reply_extraction_failed', // 候选人已回复但提取失败
   PASSED = 'passed',                     // 全部通过
   REJECTED = 'rejected',                 // 已拒绝
   RESUME_REQUESTED = 'resume_requested', // 已发送简历交换请求（等待候选人同意）

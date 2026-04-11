@@ -21,6 +21,25 @@
           <QuestionFilled w-1em h-1em mr10px />
         </el-tooltip>
       </RouterLink>
+      <RouterLink to="./RecommendTalent">
+        推荐牛人
+        <el-tooltip placement="right" :enterable="false">
+          <template #content>
+            <div w-480px>
+              <div>自动分析平台推荐的牛人简历，智能评分并收藏</div>
+              <br />
+              <div>核心功能</div>
+              <ul m0 pl2em>
+                <li>规则预筛选 + VL视觉模型深度分析</li>
+                <li>岗位级评分标准自动生成</li>
+                <li>自动收藏高分候选人</li>
+                <li>断点续传，中断后可恢复</li>
+              </ul>
+            </div>
+          </template>
+          <QuestionFilled w-1em h-1em mr10px />
+        </el-tooltip>
+      </RouterLink>
       <RouterLink to="./InterviewConfig">
         面试自动化
         <el-tooltip placement="right" :enterable="false">

@@ -26,11 +26,6 @@ import { daemonEE, sendToDaemon } from '../connect-to-daemon'
 import { runCommon } from '../../../features/run-common'
 import { loginWithCookieAssistant } from '../../../features/login-with-cookie-assistant'
 import { configWithBrowserAssistant } from '../../../features/config-with-browser-assistant'
-import {
-  createFirstLaunchNoticeApproveFlag,
-  isFirstLaunchNoticeApproveFlagExist,
-  waitForUserApproveAgreement
-} from '../../../features/first-launch-notice-window'
 import { getLastUsedAndAvailableBrowser } from '../../DOWNLOAD_DEPENDENCIES/utils/browser-history'
 import { waitForCommonJobConditionDone } from '../../../features/common-job-condition'
 import { ensureConfigFileExist } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
@@ -169,6 +164,11 @@ export default function initIpc() {
     // 智能回复相关配置
     if (hasOwn(payload, 'smartReply')) {
       bossConfig.smartReply = payload.smartReply
+    }
+
+    // 推荐牛人相关配置
+    if (hasOwn(payload, 'recommendTalent')) {
+      bossConfig.recommendTalent = payload.recommendTalent
     }
 
     promiseArr.push(writeConfigFile('boss.json', bossConfig))
@@ -402,21 +402,6 @@ export default function initIpc() {
   })
 
   ipcMain.handle('pre-enter-setting-ui', async () => {
-    if (!isFirstLaunchNoticeApproveFlagExist()) {
-      try {
-        await waitForUserApproveAgreement({
-          windowOption: {
-            parent: mainWindow!,
-            modal: true,
-            show: true
-          }
-        })
-        createFirstLaunchNoticeApproveFlag()
-      } catch {
-        app.exit(0)
-        return
-      }
-    }
     const puppeteerExecutable = await getAnyAvailablePuppeteerExecutable()
     if (!puppeteerExecutable) {
       const lastBrowser = await getLastUsedAndAvailableBrowser()
@@ -659,6 +644,149 @@ export default function initIpc() {
   ipcMain.handle('test-smart-reply-api', async () => {
     const { testLlmConnection } = await import('../../SMART_REPLY_MAIN/llm-reply')
     return await testLlmConnection()
+  })
+
+  // ==================== 推荐牛人 IPC ====================
+
+  // 启动推荐牛人任务
+  ipcMain.handle('run-recommend-talent', async (_, payload) => {
+    const mode = 'recommendTalentMain'
+    try {
+      const selectedJobConfigs = Array.isArray(payload?.selectedJobConfigs)
+        ? payload.selectedJobConfigs
+        : []
+      const selectedJobCount = selectedJobConfigs.length
+      console.log('[RecommendTalent IPC] 准备启动推荐牛人任务，选中岗位数:', selectedJobCount)
+      const { runRecordId } = await runCommon({
+        mode,
+        extraEnv: {
+          GEEKGEEKRUN_RECOMMEND_JOB_SELECTION: JSON.stringify(
+            selectedJobConfigs.map((job) => ({
+              id: job?.id,
+              jobName: job?.jobName
+            }))
+          )
+        }
+      })
+      console.log('[RecommendTalent IPC] 推荐牛人任务启动成功，runRecordId:', runRecordId)
+      daemonEE.on('message', function handler(message) {
+        if (message.workerId !== mode) return
+        if (message.type === 'worker-exited') {
+          mainWindow?.webContents.send('worker-exited', message)
+        }
+      })
+      return { runRecordId }
+    } catch (error) {
+      console.error('[RecommendTalent IPC] 启动失败:', error)
+      throw error
+    }
+  })
+
+  // 停止推荐牛人任务
+  ipcMain.handle('stop-recommend-talent', async () => {
+    const p = new Promise((resolve) => {
+      daemonEE.on('message', function handler(message) {
+        if (message.workerId !== 'recommendTalentMain') return
+        if (message.type === 'worker-exited') {
+          daemonEE.off('message', handler)
+          resolve(undefined)
+        }
+      })
+    })
+    await sendToDaemon({ type: 'stop-worker', workerId: 'recommendTalentMain' }, { needCallback: true })
+    await p
+  })
+
+  // 获取推荐牛人岗位配置列表
+  ipcMain.handle('recommend-get-job-configs', async () => {
+    const { getRecommendJobConfigs } = await import('../utils/db/index')
+    const result = await getRecommendJobConfigs()
+    return result?.data || []
+  })
+
+  // 测试VL模型连接
+  ipcMain.handle('test-vl-model', async () => {
+    const { getLlmConfig } = await import('../../SMART_REPLY_MAIN/llm-reply')
+    const { completes } = await import('@geekgeekrun/utils/gpt-request.mjs')
+    try {
+      const llmConfig = await getLlmConfig()
+      if (!llmConfig) {
+        return { success: false, error: '未找到LLM配置，请先在「大语言模型设置」中配置API' }
+      }
+      const completion = await completes({
+        baseURL: llmConfig.providerCompleteApiUrl,
+        apiKey: llmConfig.providerApiSecret,
+        model: llmConfig.model,
+        maxTokens: 50
+      }, [{ role: 'user', content: '请回复"连接成功"' }])
+      const content = completion?.choices?.[0]?.message?.content || ''
+      return { success: true, model: llmConfig.model, response: content }
+    } catch (err: any) {
+      return { success: false, error: err?.message || '连接失败' }
+    }
+  })
+
+  // 保存推荐牛人岗位配置
+  ipcMain.handle('recommend-save-job-config', async (_, payload) => {
+    const { saveRecommendJobConfig } = await import('../utils/db/index')
+    const config = payload?.config ?? payload
+    const result = await saveRecommendJobConfig(config)
+    return result?.data
+  })
+
+  // 删除推荐牛人岗位配置
+  ipcMain.handle('recommend-delete-job-config', async (_, payload: number | { id?: number }) => {
+    const { deleteRecommendJobConfig } = await import('../utils/db/index')
+    const id = typeof payload === 'number' ? payload : payload?.id
+    if (!id) {
+      throw new Error('recommend-delete-job-config requires id')
+    }
+    await deleteRecommendJobConfig(id)
+  })
+
+  // 获取推荐候选人列表
+  ipcMain.handle('recommend-get-candidates', async (_, params) => {
+    const { getRecommendCandidates } = await import('../utils/db/index')
+    const result = await getRecommendCandidates(params)
+    // result from worker is { data: { data: [...], total: N, page, pageSize } }
+    const inner = result?.data ?? result
+    return { data: inner?.data || [], total: inner?.total || 0, page: inner?.page || 1, pageSize: inner?.pageSize || 20 }
+  })
+
+  // 获取推荐候选人详情
+  ipcMain.handle('recommend-get-candidate-by-id', async (_, payload: number | { id?: number }) => {
+    const { getRecommendCandidateById } = await import('../utils/db/index')
+    const id = typeof payload === 'number' ? payload : payload?.id
+    if (!id) {
+      throw new Error('recommend-get-candidate-by-id requires id')
+    }
+    const result = await getRecommendCandidateById(id)
+    return result?.data ?? result ?? null
+  })
+
+  // 获取简历截图
+  ipcMain.handle('recommend-get-snapshot', async (_, payload: number | { candidateId?: number }) => {
+    const { getRecommendResumeSnapshot } = await import('../utils/db/index')
+    const candidateId = typeof payload === 'number' ? payload : payload?.candidateId
+    if (!candidateId) {
+      throw new Error('recommend-get-snapshot requires candidateId')
+    }
+    const result = await getRecommendResumeSnapshot(candidateId)
+    return result?.data ?? result ?? null
+  })
+
+  // 获取推荐牛人会话列表
+  ipcMain.handle('recommend-get-sessions', async () => {
+    const { getRecommendSessions } = await import('../utils/db/index')
+    const result = await getRecommendSessions()
+    return result?.data || []
+  })
+
+  // 获取推荐牛人运行状态
+  ipcMain.handle('recommend-get-status', async (_, sessionId: string) => {
+    const { getRecommendRunCheckpoint } = await import('../utils/db/index')
+    const result = await getRecommendRunCheckpoint(sessionId)
+    return result?.data || null
   })
 
   // ==================== 面试自动化 IPC ====================

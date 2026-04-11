@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import { parentPort } from 'node:worker_threads'
+import { existsSync, readFileSync } from 'node:fs'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
 import { type DataSource } from 'typeorm'
 import { getPublicDbFilePath } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
@@ -17,6 +18,10 @@ import { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/Inter
 import { InterviewQaRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewQaRecord'
 import { InterviewResume } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewResume'
 import { InterviewSystemConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewSystemConfig'
+import { RecommendJobConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/RecommendJobConfig'
+import { RecommendCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecommendCandidate'
+import { RecommendResumeSnapshot } from '@geekgeekrun/sqlite-plugin/dist/entity/RecommendResumeSnapshot'
+import { RecommendRunCheckpoint } from '@geekgeekrun/sqlite-plugin/dist/entity/RecommendRunCheckpoint'
 
 const dbInitPromise = initDb(getPublicDbFilePath())
 let dataSource: DataSource | null = null
@@ -612,6 +617,141 @@ const payloadHandler = {
       stats[item.status] = Number(item.count)
     }
     return stats
+  },
+  // ==================== Recommend Talent Handlers ====================
+  async getRecommendJobConfigs(): Promise<RecommendJobConfig[]> {
+    const repo = dataSource!.getRepository(RecommendJobConfig)
+    return await repo.find({ order: { createdAt: 'DESC' } })
+  },
+  async saveRecommendJobConfig({ config }: { config: Partial<RecommendJobConfig> }): Promise<RecommendJobConfig> {
+    const repo = dataSource!.getRepository(RecommendJobConfig)
+    let entity: RecommendJobConfig
+
+    if (config.id) {
+      entity = await repo.findOne({ where: { id: config.id } }) || new RecommendJobConfig()
+    } else if (config.encryptJobId) {
+      entity = await repo.findOne({ where: { encryptJobId: config.encryptJobId } }) || new RecommendJobConfig()
+    } else if (config.jobName) {
+      entity = await repo.findOne({ where: { jobName: config.jobName } }) || new RecommendJobConfig()
+    } else {
+      entity = new RecommendJobConfig()
+    }
+
+    Object.assign(entity, config)
+    return await repo.save(entity)
+  },
+  async deleteRecommendJobConfig({ id }): Promise<void> {
+    const repo = dataSource!.getRepository(RecommendJobConfig)
+    await repo.delete(id)
+  },
+  async getRecommendCandidates(params: {
+    sessionId?: string
+    encryptJobId?: string
+    minScore?: number
+    maxScore?: number
+    recommendOnly?: boolean
+    geekName?: string
+    page?: number
+    pageSize?: number
+  }): Promise<{ data: RecommendCandidate[]; total: number }> {
+    const { sessionId, encryptJobId, minScore, maxScore, recommendOnly, geekName, page = 1, pageSize = 20 } = params
+    const repo = dataSource!.getRepository(RecommendCandidate)
+
+    const qb = repo.createQueryBuilder('candidate')
+
+    if (sessionId) {
+      qb.andWhere('candidate.sessionId = :sessionId', { sessionId })
+    }
+    if (encryptJobId) {
+      qb.andWhere('candidate.encryptJobId = :encryptJobId', { encryptJobId })
+    }
+    const shouldFilterByScore =
+      (typeof minScore === 'number' && minScore > 0)
+      || (typeof maxScore === 'number' && maxScore < 10)
+
+    if (shouldFilterByScore) {
+      qb.andWhere('candidate.totalScore IS NOT NULL')
+    }
+    if (typeof minScore === 'number' && minScore > 0) {
+      qb.andWhere('candidate.totalScore >= :minScore', { minScore })
+    }
+    if (typeof maxScore === 'number' && maxScore < 10) {
+      qb.andWhere('candidate.totalScore <= :maxScore', { maxScore })
+    }
+    if (recommendOnly) {
+      qb.andWhere('candidate.recommend = 1')
+    }
+    if (geekName) {
+      qb.andWhere('candidate.geekName LIKE :geekName', { geekName: `%${geekName}%` })
+    }
+
+    qb.orderBy('candidate.createdAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+
+    const [data, total] = await qb.getManyAndCount()
+    return { data, total, page, pageSize }
+  },
+  async saveRecommendCandidate(candidate: Partial<RecommendCandidate>): Promise<RecommendCandidate> {
+    const repo = dataSource!.getRepository(RecommendCandidate)
+    const entity = new RecommendCandidate()
+    Object.assign(entity, candidate)
+    return await repo.save(entity)
+  },
+  async getRecommendCandidateById({ id }): Promise<RecommendCandidate | null> {
+    const repo = dataSource!.getRepository(RecommendCandidate)
+    return await repo.findOne({ where: { id } })
+  },
+  async getRecommendResumeSnapshot({ candidateId }): Promise<(RecommendResumeSnapshot & { snapshotDataUrl?: string }) | null> {
+    const repo = dataSource!.getRepository(RecommendResumeSnapshot)
+    const snapshot = await repo.findOne({ where: { candidateId } })
+    if (!snapshot) return null
+    if (snapshot.snapshotPath && existsSync(snapshot.snapshotPath)) {
+      const buffer = readFileSync(snapshot.snapshotPath)
+      const base64 = buffer.toString('base64')
+      return { ...snapshot, snapshotDataUrl: `data:image/jpeg;base64,${base64}` }
+    }
+    return snapshot
+  },
+  async saveRecommendResumeSnapshot(snapshot: Partial<RecommendResumeSnapshot>): Promise<RecommendResumeSnapshot> {
+    const repo = dataSource!.getRepository(RecommendResumeSnapshot)
+    const entity = new RecommendResumeSnapshot()
+    Object.assign(entity, snapshot)
+    return await repo.save(entity)
+  },
+  async getRecommendRunCheckpoint({ sessionId }): Promise<RecommendRunCheckpoint | null> {
+    const repo = dataSource!.getRepository(RecommendRunCheckpoint)
+    return await repo.findOne({ where: { sessionId } })
+  },
+  async saveRecommendRunCheckpoint(checkpoint: Partial<RecommendRunCheckpoint>): Promise<RecommendRunCheckpoint> {
+    const repo = dataSource!.getRepository(RecommendRunCheckpoint)
+    const entity = new RecommendRunCheckpoint()
+    Object.assign(entity, checkpoint)
+    return await repo.save(entity)
+  },
+  async updateRecommendRunCheckpoint({ sessionId, ...updates }): Promise<void> {
+    const repo = dataSource!.getRepository(RecommendRunCheckpoint)
+    await repo.update({ sessionId }, updates)
+  },
+  async getRecommendSessions(): Promise<{ sessionId: string; sessionName: string; count: number; status: string }[]> {
+    const result = await dataSource!.query(`
+      SELECT sessionId, COUNT(*) as count, MIN(createdAt) as createdAt,
+             (SELECT status FROM recommend_run_checkpoint rcp WHERE rcp.sessionId = rc.sessionId LIMIT 1) as status
+      FROM recommend_candidate rc
+      GROUP BY sessionId
+      ORDER BY createdAt DESC
+    `)
+
+    return result.map((row: any) => {
+      const date = new Date(row.createdAt)
+      const dateStr = date.toLocaleDateString('zh-CN')
+      return {
+        sessionId: row.sessionId,
+        sessionName: `${dateStr} (${row.count}人)`,
+        count: row.count,
+        status: row.status || 'unknown'
+      }
+    })
   }
 }
 

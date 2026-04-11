@@ -1908,11 +1908,927 @@ function containsSensitiveWord(text: string): boolean {
 
 ---
 
-**文档版本**: v1.4
+## 8. 推荐牛人简历分析收藏
+
+### 8.1 功能概述
+
+利用 BOSS 直聘招聘端「推荐牛人」页面，自动浏览平台推荐的候选人简历卡片，通过截图 + Qwen3-VL 视觉模型进行智能分析评分，自动收藏符合岗位要求的高分候选人。
+
+### 8.2 功能定位
+
+- **独立模块**：与招聘端自动回复、智能回复独立，单独运行
+- **登录方式**：复用现有 BOSS Cookie 登录机制
+- **分析模型**：Qwen3-VL（视觉语言模型），分析简历截图
+- **核心价值**：批量自动筛选平台推荐候选人，减少人工浏览成本
+
+### 8.3 导航结构调整
+
+#### 8.3.1 新增导航项
+
+在左侧导航栏「逛BOSS」分组中新增「推荐牛人」入口，位于「智能回复」之后。
+
+```
+逛BOSS
+├── 自动开聊
+├── 已读不回自动复聊
+├── 招聘端自动回复
+├── 智能回复
+├── 推荐牛人  ← 新增
+├── 编辑登录凭据
+└── 手动逛
+```
+
+#### 8.3.2 运行数据导航调整
+
+在「运行数据」分组中新增「推荐牛人数据」入口。
+
+```
+运行数据
+├── 开聊记录
+├── 标记不合适记录
+├── 职位库
+├── 已回复
+├── 智能回复数据
+└── 推荐牛人数据  ← 新增
+```
+
+### 8.4 两级筛选架构
+
+采用「规则预筛选 + VL 深度分析」两级筛选，减少大模型调用次数，提升处理效率。
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        两级筛选架构                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  第一级：规则预筛选（零成本）                                   │   │
+│  │  ├── 活跃度过滤：最近活跃时间 <= 配置阈值                       │     │
+│  │  ├── 求职意向过滤：是否在看机会                                 │     │
+│  │  └── 快速属性匹配：薪资范围、城市、学历（从卡片DOM直接获取）     │   │
+│  └──────────────────────┬───────────────────────────────────────┘   │
+│                         │ 通过                                       │
+│                         ▼                                            │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  第二级：VL 深度分析（Qwen3-VL）                                │   │
+│  │  ├── 截图简历卡片                                               │   │
+│  │  ├── 视觉模型分析工作经历、项目经验、技能栈                      │   │
+│  │  ├── 岗位级评分提示词自动生成评分标准                            │   │
+│  │  └── 输出：评分 + 是否推荐 + 推荐理由                           │   │
+│  └──────────────────────┬───────────────────────────────────────┘   │
+│                         │ 评分 >= 阈值                               │
+│                         ▼                                            │
+│                  收藏候选人                                           │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 8.5 核心处理流程
+
+#### 8.5.1 主流程图
+
+```
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│  启动    │───▶│  Cookie  │───▶│  选择    │───▶│  进入    │
+│  任务    │    │  登录    │    │  职位    │    │  推荐    │
+└──────────┘    └──────────┘    └──────────┘    │  牛人页  │
+                                                 └────┬─────┘
+                                                      │
+                                                      ▼
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│  收藏    │◀───│  VL深度  │◀───│  规则    │◀───│  滚动    │
+│  候选人  │    │  分析    │    │  预筛选  │    │  加载    │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘
+                                                      │
+                                                      ▼
+                                              ┌──────────┐
+                                              │  下一页  │
+                                              │  或结束  │
+                                              └──────────┘
+```
+
+#### 8.5.2 单个候选人处理流程
+
+```
+滚动加载候选人卡片
+       │
+       ▼
+┌──────────────────┐
+│ 获取卡片DOM数据    │
+│ - 姓名/活跃时间   │
+│ - 求职意向状态    │
+│ - 薪资/城市/学历  │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐     不通过    ┌──────────────────┐
+│ 规则预筛选         │────────────▶│ 跳过，记录日志    │
+│ - 活跃度检查      │              └──────────────────┘
+│ - 薪资范围匹配    │
+│ - 城市匹配        │
+│ - 学历匹配        │
+└────────┬─────────┘
+         │ 通过
+         ▼
+┌──────────────────┐     是      ┌──────────────────┐
+│ 检测验证码？       │───────────▶│ 暂停任务          │
+└────────┬─────────┘             │ 通知用户介入      │
+         │ 否                     └──────────────────┘
+         ▼
+┌──────────────────┐
+│ 截图候选人卡片    │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Qwen3-VL 分析    │
+│ - 工作经历评估    │
+│ - 技能匹配度      │
+│ - 项目经验评估    │
+│ - 综合评分        │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐     否      ┌──────────────────┐
+│ 评分 >= 阈值？    │───────────▶│ 记录分析结果      │
+└────────┬─────────┘             │ 跳过收藏          │
+         │ 是                    └──────────────────┘
+         ▼
+┌──────────────────┐
+│ 点击收藏按钮      │
+│ 保存分析数据      │
+│ 保存断点信息      │
+└──────────────────┘
+```
+
+### 8.6 岗位自动切换
+
+#### 8.6.1 功能概述
+
+启动推荐牛人分析任务时，自动将 Boss 直聘推荐牛人页面上的岗位下拉框切换到用户配置的目标岗位，确保扫描的候选人对应正确的岗位。
+
+#### 8.6.2 交互流程
+
+```
+启动任务 → 加载岗位配置 → 打开推荐牛人页面
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │ 点击当前选中岗位   │
+                              │ 展开下拉列表       │
+                              └────────┬─────────┘
+                                       │
+                                       ▼
+                              ┌──────────────────┐
+                              │ 遍历所有 li.job-item │
+                              │ 提取文本并匹配     │
+                              └────────┬─────────┘
+                                       │
+                              ┌────────┴─────────┐
+                              │                   │
+                         匹配成功              匹配失败
+                              │                   │
+                              ▼                   ▼
+                    ┌──────────────────┐  ┌──────────────────┐
+                    │ 点击目标岗位      │  │ 弹窗报错         │
+                    │ 等待候选人加载    │  │ 显示可用岗位列表  │
+                    │ 继续分析流程      │  │ 终止任务          │
+                    └──────────────────┘  └──────────────────┘
+```
+
+#### 8.6.3 Boss 页面下拉框 DOM 结构
+
+```html
+<div class="job-selecter-options">
+  <ul class="job-list">
+    <li value="xxx" class="job-item curr">           <!-- curr = 当前选中 -->
+      <span class="label">AI自动化开发程序员 _ 深圳  6-10K</span>
+    </li>
+    <li value="yyy" class="job-item">
+      <span class="label">硬件项目经理 _ 深圳  10-12K</span>
+    </li>
+  </ul>
+</div>
+```
+
+- 点击 `li.job-item.curr` 展开下拉列表
+- 目标选项文本格式：`岗位名 _ 城市  薪资`
+- 切换后 URL 不变，页面内容异步刷新
+
+#### 8.6.4 匹配策略
+
+| 策略 | 说明 |
+|------|------|
+| 双向包含匹配 | `配置名.contains(选项文本) || 选项文本.contains(配置名)` |
+| 匹配结果 | 取第一个匹配到的选项 |
+| 已选中判断 | 如果目标选项已有 `curr` 类，跳过点击 |
+
+#### 8.6.5 实现细节
+
+**切换时机**：在 mainLoop 的 `for (const jobConfig of matchedJobConfigs)` 循环内，checkpoint 加载之前执行。
+
+**文件位置**：`packages/ui/src/main/flow/RECOMMEND_TALENT_MAIN/job-fetcher.ts` → `switchToJob(page, jobName)`
+
+**等待策略**：切换后轮询候选人卡片 DOM 出现（超时10秒），确认页面已刷新。
+
+**错误处理**：
+
+| 场景 | 处理方式 |
+|------|----------|
+| 页面无 `li.job-item.curr` 元素 | 抛出错误，弹窗提示页面结构可能已变更 |
+| 配置的岗位名不在下拉列表中 | 弹窗显示可用岗位列表，终止任务 |
+| 切换后候选人未加载 | 记录日志，继续执行（扫描环节有重试逻辑） |
+
+#### 8.6.6 UI 变更
+
+岗位选择从多选（checkbox）改为单选（radio），每次启动只分析一个岗位。
+
+### 8.7 岗位级评分提示词自动生成
+
+#### 8.7.1 设计思路
+
+根据用户配置的岗位信息（岗位职责 + 任职要求），自动生成针对性的 VL 分析提示词，使评分标准与岗位需求精准匹配。
+
+#### 8.7.2 提示词模板
+
+```
+你是一个专业的招聘分析师，请根据以下岗位要求分析候选人简历截图。
+
+## 岗位信息
+- 职位名称：{jobName}
+- 岗位职责：{jobResponsibilities}
+- 任职要求：{jobRequirements}
+
+## 分析维度与评分规则
+请从以下维度逐一评估，每项 1-10 分：
+
+1. **工作经历匹配度**（权重30%）
+   - 行业经验是否相关
+   - 公司规模/类型是否匹配
+   - 岗位层级是否合适
+
+2. **技术技能匹配度**（权重30%）
+   - 核心技能覆盖程度
+   - 技术栈与岗位要求一致性
+   - 技能深度评估
+
+3. **项目经验质量**（权重20%）
+   - 项目复杂度和规模
+   - 项目与岗位相关性
+   - 项目成果/业绩
+
+4. **综合素质**（权重20%）
+   - 学历背景
+   - 职业发展轨迹
+   - 稳定性评估
+
+## 输出格式
+请严格返回以下JSON格式：
+```json
+{
+  "workMatch": 8,
+  "skillMatch": 7,
+  "projectQuality": 6,
+  "overallQuality": 8,
+  "totalScore": 7.4,
+  "recommend": true,
+  "reason": "简要推荐/不推荐理由，50字以内",
+  "keyStrengths": ["优势1", "优势2"],
+  "concerns": ["顾虑1"]
+}
+```
+
+## 评分说明
+- totalScore = workMatch * 0.3 + skillMatch * 0.3 + projectQuality * 0.2 + overallQuality * 0.2
+- recommend = true 当 totalScore >= {scoreThreshold}
+- reason 控制在 50 字以内
+- keyStrengths 最多 3 条
+- concerns 最多 2 条
+```
+
+#### 8.7.3 提示词生成逻辑
+
+```typescript
+function buildScoringPrompt(jobConfig: RecommendJobConfig): string {
+  const template = SCORE_PROMPT_TEMPLATE;
+  return template
+    .replace('{jobName}', jobConfig.jobName)
+    .replace('{jobResponsibilities}', jobConfig.jobResponsibilities)
+    .replace('{jobRequirements}', jobConfig.jobRequirements)
+    .replace('{scoreThreshold}', String(jobConfig.scoreThreshold));
+}
+```
+
+### 8.8 规则预筛选设计
+
+#### 8.8.1 预筛选项
+
+| 筛选维度 | 配置字段 | 数据来源 | 说明 |
+|----------|----------|----------|------|
+| 最近活跃 | `activeWithinDays` | 卡片DOM | 最近N天内活跃 |
+| 求职状态 | `requireJobSeeking` | 卡片DOM | 是否在看机会 |
+| 最低学历 | `minDegree` | 卡片DOM | 学历枚举值 |
+| 薪资范围 | `salaryMin` / `salaryMax` | 卡片DOM | 期望薪资区间 |
+| 城市 | `targetCities` | 卡片DOM | 目标城市列表 |
+| 工作年限 | `minWorkYears` / `maxWorkYears` | 卡片DOM | 年限范围 |
+
+#### 8.8.2 预筛选逻辑
+
+```typescript
+function preFilterCandidate(card: CandidateCard, config: RecommendJobConfig): boolean {
+  // 活跃度检查
+  if (card.activeDaysAgo > config.activeWithinDays) return false;
+
+  // 求职状态检查
+  if (config.requireJobSeeking && !card.isJobSeeking) return false;
+
+  // 学历检查
+  if (config.minDegree && degreeOrder(card.degree) < degreeOrder(config.minDegree)) return false;
+
+  // 薪资范围检查
+  if (config.salaryMin && card.expectedSalary < config.salaryMin) return false;
+  if (config.salaryMax && card.expectedSalary > config.salaryMax) return false;
+
+  // 城市检查
+  if (config.targetCities.length > 0 && !config.targetCities.includes(card.city)) return false;
+
+  // 工作年限检查
+  if (config.minWorkYears && card.workYears < config.minWorkYears) return false;
+  if (config.maxWorkYears && card.workYears > config.maxWorkYears) return false;
+
+  return true;
+}
+```
+
+### 8.9 断点续传机制
+
+#### 8.9.1 设计思路
+
+推荐牛人列表可能包含大量候选人，任务可能因网络中断、验证码、手动停止等原因中断。断点续传机制确保任务恢复后不重复处理已分析的候选人。
+
+#### 8.9.2 断点数据结构
+
+每次成功处理一个候选人后保存断点：
+
+```typescript
+interface RunCheckpoint {
+  id: number;
+  sessionId: string;            // 本次运行唯一ID
+  encryptJobId: string;         // 当前处理的职位ID
+  currentPage: number;          // 当前页码
+  currentPageOffset: number;    // 当前页内处理偏移量
+  processedCount: number;       // 已处理总数
+  matchedCount: number;         // 匹配成功数
+  skippedCount: number;         // 预筛选跳过数
+  lastProcessedUserId: string;  // 最后处理的候选人ID（去重依据）
+  status: 'running' | 'paused' | 'completed' | 'error';
+  errorMessage: string | null;
+  updatedAt: Date;
+}
+```
+
+#### 8.9.3 恢复逻辑
+
+```
+任务启动
+       │
+       ▼
+┌──────────────────┐     存在     ┌──────────────────┐
+│ 检查断点记录？    │────────────▶│ 加载断点数据      │
+└────────┬─────────┘             └────────┬─────────┘
+         │ 不存在                         │
+         ▼                                ▼
+┌──────────────────┐             ┌──────────────────┐
+│ 从首页开始        │             │ 跳转到断点页码    │
+│ 创建新断点        │             │ 跳过已处理候选人  │
+└──────────────────┘             └──────────────────┘
+                                          │
+                                          ▼
+                                   继续处理后续候选人
+```
+
+#### 8.9.4 去重机制
+
+使用 `lastProcessedUserId` + 数据库已处理记录双重去重：
+1. 断点恢复时，跳过 `lastProcessedUserId` 及之前的候选人
+2. 每个候选人处理前查询数据库，确认该 `encryptUserId` 在当前 `sessionId` 下未被处理
+
+### 8.10 验证码异常检测与处理
+
+#### 8.10.1 检测方式
+
+```typescript
+async function detectCaptcha(page: Page): Promise<boolean> {
+  // 检测常见验证码元素
+  const captchaSelectors = [
+    '.captcha-container',
+    '#captcha',
+    '.verify-wrap',
+    'iframe[src*="captcha"]',
+    '.geetest_holder'
+  ];
+
+  for (const selector of captchaSelectors) {
+    const element = await page.$(selector);
+    if (element) return true;
+  }
+
+  // 检测页面URL变化（跳转到验证页面）
+  const url = page.url();
+  if (url.includes('captcha') || url.includes('verify') || url.includes('security-check')) {
+    return true;
+  }
+
+  return false;
+}
+```
+
+#### 8.10.2 处理流程
+
+```
+检测到验证码
+       │
+       ▼
+┌──────────────────┐
+│ 保存断点          │
+│ 暂停任务          │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 弹出通知（Electron Notification）│
+│ 标题：需要手动处理验证码          │
+│ 正文：请前往浏览器手动完成验证    │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 等待用户确认      │
+│ 用户完成验证后    │
+│ 点击「继续运行」  │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ 加载断点恢复任务  │
+└──────────────────┘
+```
+
+### 8.11 数据库设计
+
+#### 8.11.1 推荐牛人岗位配置表 `recommend_job_config`
+
+```sql
+CREATE TABLE recommend_job_config (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  encrypt_job_id VARCHAR(64) NOT NULL UNIQUE,   -- BOSS直聘职位ID
+  job_name VARCHAR(128) NOT NULL,               -- 职位名称
+  job_responsibilities TEXT,                     -- 岗位职责
+  job_requirements TEXT,                         -- 任职要求
+  score_threshold DECIMAL(3,1) DEFAULT 7.0,      -- 推荐评分阈值（1-10）
+  active_within_days INTEGER DEFAULT 30,         -- 最近活跃天数
+  require_job_seeking BOOLEAN DEFAULT 1,         -- 是否要求在看机会
+  min_degree VARCHAR(32),                        -- 最低学历
+  salary_min INTEGER,                            -- 最低期望薪资（K/月）
+  salary_max INTEGER,                            -- 最高期望薪资（K/月）
+  target_cities TEXT,                            -- 目标城市JSON数组
+  min_work_years INTEGER DEFAULT 0,              -- 最小工作年限
+  max_work_years INTEGER DEFAULT 99,             -- 最大工作年限
+  max_collect_per_job INTEGER DEFAULT 20,        -- 每职位最大收藏数
+  enabled BOOLEAN DEFAULT 1,                     -- 是否启用
+  scoring_prompt TEXT,                           -- 自定义评分提示词（为空则自动生成）
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### 8.11.2 推荐候选人表 `recommend_candidate`
+
+```sql
+CREATE TABLE recommend_candidate (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id VARCHAR(64) NOT NULL,               -- 运行会话ID
+  encrypt_user_id VARCHAR(64) NOT NULL,          -- 候选人ID
+  encrypt_job_id VARCHAR(64) NOT NULL,           -- 职位ID
+  job_name VARCHAR(128),                         -- 职位名称
+  geek_name VARCHAR(64),                         -- 候选人姓名
+  avatar_url TEXT,                               -- 头像URL
+  degree VARCHAR(32),                            -- 学历
+  work_years INTEGER,                            -- 工作年限
+  city VARCHAR(64),                              -- 城市
+  expected_salary VARCHAR(64),                   -- 期望薪资
+  current_company VARCHAR(128),                  -- 当前公司
+  current_position VARCHAR(128),                 -- 当前职位
+  active_status VARCHAR(32),                     -- 活跃状态文本
+  is_job_seeking BOOLEAN,                        -- 是否在看机会
+  total_score DECIMAL(3,1),                      -- 综合评分
+  work_match_score DECIMAL(3,1),                 -- 工作经历匹配分
+  skill_match_score DECIMAL(3,1),                -- 技能匹配分
+  project_quality_score DECIMAL(3,1),            -- 项目经验质量分
+  overall_quality_score DECIMAL(3,1),            -- 综合素质分
+  recommend BOOLEAN,                             -- 是否推荐
+  reason TEXT,                                   -- 推荐/不推荐理由
+  key_strengths TEXT,                            -- 优势JSON数组
+  concerns TEXT,                                 -- 顾虑JSON数组
+  is_collected BOOLEAN DEFAULT 0,                -- 是否已收藏
+  snapshot_id INTEGER,                           -- 关联截图记录ID
+  pre_filter_passed BOOLEAN DEFAULT 1,           -- 是否通过预筛选
+  pre_filter_fail_reason VARCHAR(256),           -- 预筛选未通过原因
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(session_id, encrypt_user_id, encrypt_job_id)
+);
+
+CREATE INDEX idx_recommend_candidate_session ON recommend_candidate(session_id);
+CREATE INDEX idx_recommend_candidate_job ON recommend_candidate(encrypt_job_id);
+CREATE INDEX idx_recommend_candidate_score ON recommend_candidate(total_score DESC);
+```
+
+#### 8.11.3 简历截图记录表 `recommend_resume_snapshot`
+
+```sql
+CREATE TABLE recommend_resume_snapshot (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id INTEGER NOT NULL,                 -- 关联候选人记录ID
+  encrypt_user_id VARCHAR(64) NOT NULL,          -- 候选人ID
+  snapshot_path TEXT NOT NULL,                   -- 截图文件本地路径
+  snapshot_size INTEGER,                         -- 截图文件大小（字节）
+  vl_raw_response TEXT,                          -- VL模型原始返回内容
+  vl_request_tokens INTEGER,                     -- 请求token数
+  vl_response_tokens INTEGER,                    -- 响应token数
+  vl_duration_ms INTEGER,                        -- VL调用耗时（毫秒）
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (candidate_id) REFERENCES recommend_candidate(id)
+);
+
+CREATE INDEX idx_snapshot_candidate ON recommend_resume_snapshot(encrypt_user_id);
+```
+
+#### 8.11.4 运行断点表 `recommend_run_checkpoint`
+
+```sql
+CREATE TABLE recommend_run_checkpoint (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id VARCHAR(64) NOT NULL UNIQUE,        -- 运行会话ID
+  encrypt_job_id VARCHAR(64) NOT NULL,           -- 当前处理职位ID
+  current_page INTEGER DEFAULT 1,                -- 当前页码
+  current_page_offset INTEGER DEFAULT 0,         -- 当前页内偏移
+  processed_count INTEGER DEFAULT 0,             -- 已处理总数
+  matched_count INTEGER DEFAULT 0,               -- 匹配成功数
+  skipped_count INTEGER DEFAULT 0,               -- 预筛选跳过数
+  collected_count INTEGER DEFAULT 0,             -- 已收藏数
+  last_processed_user_id VARCHAR(64),            -- 最后处理的候选人ID
+  status VARCHAR(32) DEFAULT 'running',          -- running/paused/completed/error
+  error_message TEXT,                            -- 错误信息
+  started_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- 启动时间
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 8.12 配置存储
+
+#### 8.12.1 boss.json 新增字段
+
+```json
+{
+  "recommendTalent": {
+    "scanIntervalSeconds": 3,
+    "scrollDelayMin": 1000,
+    "scrollDelayMax": 3000,
+    "vlModel": "qwen-vl-max",
+    "vlApiTimeout": 30000,
+    "snapshotDir": "snapshots/recommend",
+    "autoCollectThreshold": 7.0,
+    "maxCollectPerRun": 50,
+    "pauseOnCaptcha": true,
+    "notifyOnCaptcha": true
+  }
+}
+```
+
+### 8.13 子程序入口
+
+```
+packages/ui/src/main/flow/RECOMMEND_TALENT_MAIN/
+├── index.ts              # 主流程入口
+├── bootstrap.ts          # 启动逻辑（Cookie登录、页面初始化）
+├── page-scanner.ts       # 页面滚动扫描、卡片DOM数据提取
+├── pre-filter.ts         # 规则预筛选
+├── job-fetcher.ts        # 岗位切换（DOM交互、匹配、切换）
+├── screenshot.ts         # 截图管理（截取、存储、清理）
+├── vl-analyzer.ts        # Qwen3-VL 视觉模型调用与分析
+├── prompt-builder.ts     # 岗位级评分提示词自动生成
+├── checkpoint.ts         # 断点续传管理
+├── captcha-detector.ts   # 验证码检测
+└── collector.ts          # 收藏操作
+```
+
+### 8.14 IPC 通信接口
+
+```typescript
+// 启动推荐牛人分析任务
+ipcMain.handle('run-recommend-talent', params: {
+  encryptJobIds: string[]     // 要分析的职位ID列表
+}): Promise<{ sessionId: string }>
+
+// 停止任务
+ipcMain.handle('stop-recommend-talent'): Promise<void>
+
+// 获取运行状态
+ipcMain.handle('get-recommend-talent-status', sessionId: string): Promise<{
+  status: string
+  processedCount: number
+  matchedCount: number
+  collectedCount: number
+  skippedCount: number
+  currentPage: number
+}>
+
+// 继续运行（验证码处理后）
+ipcMain.handle('resume-recommend-talent', sessionId: string): Promise<void>
+
+// 获取岗位配置列表
+ipcMain.handle('recommend-get-job-configs'): Promise<RecommendJobConfig[]>
+
+// 保存岗位配置
+ipcMain.handle('recommend-save-job-config', config: RecommendJobConfig): Promise<void>
+
+// 删除岗位配置
+ipcMain.handle('recommend-delete-job-config', id: number): Promise<void>
+
+// 获取推荐候选人列表
+ipcMain.handle('recommend-get-candidates', params: {
+  sessionId?: string
+  encryptJobId?: string
+  minScore?: number
+  recommendOnly?: boolean
+  page: number
+  pageSize: number
+}): Promise<{ list: RecommendCandidate[]; total: number }>
+
+// 获取截图详情
+ipcMain.handle('recommend-get-snapshot', snapshotId: number): Promise<{
+  imagePath: string
+  vlAnalysis: string
+}>
+
+// 导出推荐数据
+ipcMain.handle('recommend-export-candidates', params: {
+  sessionId: string
+  format: 'json' | 'csv'
+}): Promise<string>
+```
+
+### 8.15 类型定义
+
+```typescript
+// 推荐牛人岗位配置
+interface RecommendJobConfig {
+  id: number;
+  encryptJobId: string;
+  jobName: string;
+  jobResponsibilities: string;
+  jobRequirements: string;
+  scoreThreshold: number;
+  activeWithinDays: number;
+  requireJobSeeking: boolean;
+  minDegree: string;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  targetCities: string[];
+  minWorkYears: number;
+  maxWorkYears: number;
+  maxCollectPerJob: number;
+  enabled: boolean;
+  scoringPrompt: string | null;
+}
+
+// 推荐候选人
+interface RecommendCandidate {
+  id: number;
+  sessionId: string;
+  encryptUserId: string;
+  encryptJobId: string;
+  jobName: string;
+  geekName: string;
+  avatarUrl: string;
+  degree: string;
+  workYears: number;
+  city: string;
+  expectedSalary: string;
+  currentCompany: string;
+  currentPosition: string;
+  activeStatus: string;
+  isJobSeeking: boolean;
+  totalScore: number;
+  workMatchScore: number;
+  skillMatchScore: number;
+  projectQualityScore: number;
+  overallQualityScore: number;
+  recommend: boolean;
+  reason: string;
+  keyStrengths: string[];
+  concerns: string[];
+  isCollected: boolean;
+  snapshotId: number | null;
+  preFilterPassed: boolean;
+  preFilterFailReason: string | null;
+}
+
+// VL分析结果
+interface VLAnalysisResult {
+  workMatch: number;
+  skillMatch: number;
+  projectQuality: number;
+  overallQuality: number;
+  totalScore: number;
+  recommend: boolean;
+  reason: string;
+  keyStrengths: string[];
+  concerns: string[];
+}
+
+// 候选人卡片DOM数据
+interface CandidateCard {
+  name: string;
+  encryptUserId: string;
+  avatar: string;
+  degree: string;
+  workYears: number;
+  city: string;
+  expectedSalary: number;
+  currentCompany: string;
+  currentPosition: string;
+  activeDaysAgo: number;
+  isJobSeeking: boolean;
+}
+```
+
+### 8.16 推荐牛人配置页面
+
+```
+推荐牛人配置页面
+├── 岗位配置（Collapse）
+│   ├── 岗位列表（Table）
+│   │   ├── 职位名称
+│   │   ├── 评分阈值
+│   │   ├── 预筛条件摘要
+│   │   ├── 启用状态
+│   │   └── 操作（编辑/删除）
+│   └── 添加岗位按钮
+├── 预筛条件（Collapse，在岗位编辑内）
+│   ├── 最近活跃天数
+│   ├── 是否要求在看机会
+│   ├── 最低学历
+│   ├── 薪资范围
+│   ├── 目标城市
+│   └── 工作年限范围
+├── 岗位说明（Collapse，在岗位编辑内）
+│   ├── 岗位职责（textarea）
+│   ├── 任职要求（textarea）
+│   ├── 评分阈值滑块（1-10，默认7）
+│   └── 每职位最大收藏数
+├── 大模型配置（Collapse）
+│   ├── 评分提示词预览（只读textarea）
+│   └── 重置为自动生成按钮
+├── 运行控制面板
+│   ├── 选择要分析的职位（单选）
+│   ├── 启动/停止按钮
+│   ├── 运行状态
+│   └── 进度条
+└── 风险提示（Alert）
+    ├── VL模型分析可能不准确的提示
+    ├── 频繁操作可能触发验证码的提示
+    └── 截图存储占用磁盘空间的提示
+```
+
+### 8.17 推荐牛人数据页面
+
+#### 8.17.1 页面结构
+
+```
+推荐牛人数据页面
+├── 筛选条件
+│   ├── 会话选择（按运行时间）
+│   ├── 职位筛选
+│   ├── 评分范围滑块
+│   ├── 仅显示已推荐开关
+│   └── 搜索候选人姓名
+├── 统计概览
+│   ├── 本次运行已分析数
+│   ├── 匹配成功数
+│   ├── 已收藏数
+│   ├── 平均评分
+│   └── 预筛选通过率
+├── 候选人列表（Table）
+│   ├── 姓名 + 头像
+│   ├── 学历
+│   ├── 工作年限
+│   ├── 当前公司/职位
+│   ├── 期望薪资
+│   ├── 综合评分（带颜色标识）
+│   ├── 是否推荐
+│   ├── 推荐理由
+│   ├── 是否已收藏
+│   └── 操作（查看截图/查看详情）
+└── 详情侧边面板
+    ├── 候选人基本信息
+    ├── 评分明细（雷达图或条形图）
+    ├── 优势列表
+    ├── 顾虑列表
+    ├── VL分析原始返回
+    └── 简历截图预览
+```
+
+#### 8.17.2 评分颜色标识
+
+| 评分范围 | 颜色 | 说明 |
+|----------|------|------|
+| 8.0 - 10.0 | 绿色 | 强烈推荐 |
+| 7.0 - 7.9 | 蓝色 | 推荐收藏 |
+| 5.0 - 6.9 | 橙色 | 待定 |
+| 0.0 - 4.9 | 红色 | 不推荐 |
+
+### 8.18 反检测策略
+
+| 策略 | 参数 | 说明 |
+|------|------|------|
+| 滚动延迟 | 1-3秒随机 | 模拟人工浏览 |
+| 翻页延迟 | 3-5秒随机 | 模拟阅读耗时 |
+| 每小时上限 | 最多处理100个候选人 | 防止异常流量 |
+| 收藏间隔 | 5-10秒随机 | 模拟人工操作 |
+| 每日上限 | 最多收藏50人/职位 | 可配置 |
+
+### 8.19 边界情况处理
+
+| 场景 | 处理方式 |
+|------|----------|
+| 职位无推荐牛人 | 提示用户，跳过该职位 |
+| VL模型调用超时 | 重试1次后跳过，记录错误 |
+| VL返回格式异常 | 解析失败记录原始响应，跳过该候选人 |
+| 截图失败 | 重试1次后跳过 |
+| 收藏按钮不存在 | 跳过收藏，仅记录分析数据 |
+| 已达最大收藏数 | 停止该职位的分析任务 |
+| 页面结构变化（DOM更新） | 记录错误日志，提示用户更新选择器 |
+| 磁盘空间不足（截图） | 清理旧截图，提示用户 |
+
+### 8.20 开发计划
+
+#### 第一阶段：基础框架（预计 3-5 天）
+- [ ] 数据库表创建与迁移
+- [ ] 子程序入口文件搭建
+- [ ] Cookie登录与页面初始化
+- [ ] 推荐牛人页面导航
+
+#### 第二阶段：扫描与预筛选（预计 3-5 天）
+- [ ] 页面滚动加载逻辑
+- [ ] 卡片DOM数据提取
+- [ ] 规则预筛选实现
+- [ ] 断点续传机制
+
+#### 第三阶段：VL分析（预计 5-7 天）
+- [ ] 截图功能实现
+- [ ] Qwen3-VL 模型集成
+- [ ] 岗位级评分提示词生成
+- [ ] VL结果解析与评分计算
+
+#### 第四阶段：收藏与数据（预计 3-5 天）
+- [ ] 自动收藏操作实现
+- [ ] 验证码检测与处理
+- [ ] 数据存储完善
+- [ ] 运行状态实时更新
+
+#### 第五阶段：UI与优化（预计 3-5 天）
+- [ ] 配置页面开发
+- [ ] 数据展示页面开发
+- [ ] 详情面板与截图预览
+- [ ] 反检测策略完善
+- [ ] 性能优化
+
+---
+
+**文档版本**: v1.6
 **创建日期**: 2026-03-25
-**最后更新**: 2026-03-27
+**最后更新**: 2026-04-11
 
 ## 更新日志
+
+### v1.6 (2026-04-11)
+- 新增「岗位自动切换」功能设计（8.6节）
+- 推荐牛人岗位选择从多选改为单选
+- 新增 Boss 推荐牛人页面下拉框 DOM 结构文档
+- 新增双向包含匹配策略说明
+- 新增岗位切换失败时的错误处理规范
+- 更新子程序入口文件列表，新增 job-fetcher.ts
+
+### v1.5 (2026-04-09)
+- 新增「推荐牛人简历分析收藏」完整功能设计（第8章）
+- 新增推荐牛人数据库表设计（RecommendJobConfig / RecommendCandidate / RecommendResumeSnapshot / RecommendRunCheckpoint）
+- 新增 Qwen3-VL 简历截图分析流程设计
+- 新增岗位级评分提示词自动生成机制
+- 新增规则预筛选 + VL 深度分析两级筛选架构
+- 新增断点续传机制设计
+- 新增验证码异常检测与用户介入处理
+- 新增推荐牛人数据展示页面设计
 
 ### v1.4 (2026-03-27)
 - 新增「智能回复」功能详细设计

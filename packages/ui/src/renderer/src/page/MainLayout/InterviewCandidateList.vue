@@ -8,6 +8,7 @@
             <el-option label="新候选人" value="new" />
             <el-option label="等待回复" value="waiting_round_1" />
             <el-option label="等待第2轮回复" value="waiting_round_2" />
+            <el-option label="回复提取失败" value="reply_extraction_failed" />
             <el-option label="已通过" value="passed" />
             <el-option label="已拒绝" value="rejected" />
             <el-option label="已发送简历邀请" value="resume_requested" />
@@ -304,6 +305,7 @@ function getStatusLabel(status: string): string {
     waiting_round_1: '等待第1轮',
     waiting_round_2: '等待第2轮',
     waiting_round_n: '等待回复中',
+    reply_extraction_failed: '回复提取失败',
     passed: '已通过',
     rejected: '已拒绝',
     resume_requested: '已邀请简历',
@@ -320,6 +322,7 @@ function getStatusTagType(status: string): string {
     waiting_round_1: 'warning',
     waiting_round_2: 'warning',
     waiting_round_n: 'warning',
+    reply_extraction_failed: 'danger',
     passed: 'success',
     rejected: 'danger',
     resume_requested: 'primary',

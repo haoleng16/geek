@@ -13,28 +13,28 @@ import { sleep } from '@geekgeekrun/utils/sleep.mjs'
  * 招聘者端 - 聊天列表中的候选人信息
  */
 export interface RecruiterChatListItem {
-  name: string                    // 候选人姓名
-  avatar: string                  // 头像URL
-  encryptGeekId: string           // 候选人加密ID
-  securityId: string              // 安全ID
-  encryptJobId: string            // 应聘职位的加密ID
-  brandName: string               // 公司名称（候选人当前公司）
-  friendSource: number            // 来源类型
-  friendId: number                // 好友ID
-  uniqueId: string                // 唯一标识
-  isTop: number                   // 是否置顶
-  isFiltered: boolean             // 是否被过滤
-  relationType: number            // 关系类型
-  sourceTitle: string             // 来源标题
-  goldGeekStatus: number          // 牛人状态
-  lastText: string                // 最后一条消息
-  lastMessageId: string           // 最后消息ID
-  unreadCount: number             // 未读消息数
-  lastMsgStatus: number           // 最后消息状态
-  lastTS: number                  // 最后消息时间戳
-  updateTime: number              // 更新时间
-  title: string                   // 职位标题
-  lastIsSelf: boolean             // 最后一条是否自己发送
+  name: string // 候选人姓名
+  avatar: string // 头像URL
+  encryptGeekId: string // 候选人加密ID
+  securityId: string // 安全ID
+  encryptJobId: string // 应聘职位的加密ID
+  brandName: string // 公司名称（候选人当前公司）
+  friendSource: number // 来源类型
+  friendId: number // 好友ID
+  uniqueId: string // 唯一标识
+  isTop: number // 是否置顶
+  isFiltered: boolean // 是否被过滤
+  relationType: number // 关系类型
+  sourceTitle: string // 来源标题
+  goldGeekStatus: number // 牛人状态
+  lastText: string // 最后一条消息
+  lastMessageId: string // 最后消息ID
+  unreadCount: number // 未读消息数
+  lastMsgStatus: number // 最后消息状态
+  lastTS: number // 最后消息时间戳
+  updateTime: number // 更新时间
+  title: string // 职位标题
+  lastIsSelf: boolean // 最后一条是否自己发送
 }
 
 /**
@@ -42,26 +42,26 @@ export interface RecruiterChatListItem {
  */
 export interface CandidateResume {
   // 基本信息
-  encryptGeekId: string           // 候选人ID
-  name: string                    // 姓名
-  avatar: string                  // 头像
-  degree: string                  // 学历
-  workYear: number                // 工作年限
-  age: number                     // 年龄
-  gender: string                  // 性别
+  encryptGeekId: string // 候选人ID
+  name: string // 姓名
+  avatar: string // 头像
+  degree: string // 学历
+  workYear: number // 工作年限
+  age: number // 年龄
+  gender: string // 性别
 
   // 求职意向
-  expectJob: string               // 期望职位
-  expectSalary: string            // 期望薪资
-  expectCity: string              // 期望城市
+  expectJob: string // 期望职位
+  expectSalary: string // 期望薪资
+  expectCity: string // 期望城市
 
   // 当前状态
-  currentCompany: string          // 当前公司
-  currentJob: string              // 当前职位
-  jobStatus: string               // 求职状态（离职/在职等）
+  currentCompany: string // 当前公司
+  currentJob: string // 当前职位
+  jobStatus: string // 求职状态（离职/在职等）
 
   // 技能标签
-  skills: string[]                // 技能标签列表
+  skills: string[] // 技能标签列表
 
   // 工作经历
   workExperiences: WorkExperience[]
@@ -80,31 +80,36 @@ export interface CandidateResume {
 }
 
 export interface WorkExperience {
-  company: string                 // 公司名称
-  position: string                // 职位
-  startTime: string               // 开始时间
-  endTime: string                 // 结束时间
-  duration: string                // 时长
-  description: string             // 工作描述
-  skills: string[]                // 使用技能
+  company: string // 公司名称
+  position: string // 职位
+  startTime: string // 开始时间
+  endTime: string // 结束时间
+  duration: string // 时长
+  description: string // 工作描述
+  skills: string[] // 使用技能
 }
 
 export interface ProjectExperience {
-  name: string                    // 项目名称
-  role: string                    // 角色
-  startTime: string               // 开始时间
-  endTime: string                 // 结束时间
-  description: string             // 项目描述
-  achievement: string             // 项目业绩
-  skills: string[]                // 使用技能
+  name: string // 项目名称
+  role: string // 角色
+  startTime: string // 开始时间
+  endTime: string // 结束时间
+  description: string // 项目描述
+  achievement: string // 项目业绩
+  skills: string[] // 使用技能
 }
 
 export interface EducationExperience {
-  school: string                  // 学校
-  major: string                   // 专业
-  degree: string                  // 学历
-  startTime: string               // 开始时间
-  endTime: string                 // 结束时间
+  school: string // 学校
+  major: string // 专业
+  degree: string // 学历
+  startTime: string // 开始时间
+  endTime: string // 结束时间
+}
+
+export interface ResumeAnalysisSection {
+  title: string
+  content: string
 }
 
 /**
@@ -151,11 +156,12 @@ const BOSS_HISTORY_MSG_API = 'https://www.zhipin.com/wapi/zpchat/boss/historyMsg
  * 获取聊天列表（招聘者端 - 候选人列表）
  */
 export async function getChatList(page: Page): Promise<RecruiterChatListItem[]> {
-  await page.waitForFunction(() => {
-    return Array.isArray(
-      document.querySelector('.main-wrap .chat-user')?.__vue__?.list
-    )
-  }, { timeout: 30000 })
+  await page.waitForFunction(
+    () => {
+      return Array.isArray(document.querySelector('.main-wrap .chat-user')?.__vue__?.list)
+    },
+    { timeout: 30000 }
+  )
 
   const chatList = await page.evaluate(() => {
     const vueComponent = document.querySelector('.main-wrap .chat-user')?.__vue__
@@ -168,15 +174,10 @@ export async function getChatList(page: Page): Promise<RecruiterChatListItem[]> 
 /**
  * 点击聊天项，进入聊天详情
  */
-export async function clickChatItem(
-  page: Page,
-  chatItem: RecruiterChatListItem
-): Promise<void> {
+export async function clickChatItem(page: Page, chatItem: RecruiterChatListItem): Promise<void> {
   // 滚动到目标项
   await page.evaluate((item) => {
-    const listEl = document.querySelector(
-      '.chat-content .user-list .user-list-content'
-    )
+    const listEl = document.querySelector('.chat-content .user-list .user-list-content')
     if (listEl && listEl.__vue__?.scrollToIndex) {
       // 找到该项在列表中的索引
       const vueList = document.querySelector('.main-wrap .chat-user')?.__vue__?.list || []
@@ -198,8 +199,7 @@ export async function clickChatItem(
     )
     for (const el of items) {
       const vueData = (el as any).__vue__?.source
-      if (vueData?.encryptGeekId === item.encryptGeekId ||
-          vueData?.friendId === item.friendId) {
+      if (vueData?.encryptGeekId === item.encryptGeekId || vueData?.friendId === item.friendId) {
         return el
       }
     }
@@ -243,25 +243,14 @@ export async function getCandidateResumeByApi(
   encryptGeekId: string
 ): Promise<CandidateResume | null> {
   // 监听简历API响应
-  const responsePromise = page.waitForResponse(
-    (response) => {
-      const url = response.url()
-      return (
-        url.includes('/wapi/zpchat/boss/geek/') ||
-        url.includes('/wapi/zpgeek/resume/') ||
-        url.includes('/geekInfo') ||
-        url.includes('/geek/info')
-      )
-    },
-    { timeout: 15000 }
-  ).catch(() => null)
+  const responsePromise = waitForCandidateResumeByApi(page, encryptGeekId)
 
   // 如果没有触发API，尝试点击查看简历按钮
   const viewResumeBtn = await page.$(
     '.candidate-info .view-resume-btn, ' +
-    '.geek-info .resume-btn, ' +
-    '.right-box .resume-link, ' +
-    '[class*="resume"]'
+      '.geek-info .resume-btn, ' +
+      '.right-box .resume-link, ' +
+      '[class*="resume"]'
   )
 
   if (viewResumeBtn) {
@@ -270,16 +259,74 @@ export async function getCandidateResumeByApi(
   }
 
   try {
-    const response = await responsePromise
-    if (response) {
-      const data = await response.json()
-      return parseResumeApiResponse(data)
-    }
+    return await responsePromise
   } catch (error) {
     console.warn('通过API获取简历失败:', error)
   }
 
   return null
+}
+
+/**
+ * 仅等待已触发的简历 API 响应，不主动点击页面元素。
+ *
+ * 推荐牛人页面更适合在点击卡片前先挂监听，再由卡片点击触发请求。
+ */
+export async function waitForCandidateResumeByApi(
+  page: Page,
+  encryptGeekId?: string,
+  timeout = 15000
+): Promise<CandidateResume | null> {
+  return await new Promise((resolve) => {
+    let settled = false
+
+    const cleanup = (result: CandidateResume | null) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      clearTimeout(timer)
+      page.off('response', handleResponse)
+      resolve(result)
+    }
+
+    const handleResponse = async (response: any) => {
+      const url = response.url()
+      const isResumeResponse =
+        url.includes('/wapi/zpchat/boss/geek/') ||
+        url.includes('/wapi/zpgeek/resume/') ||
+        url.includes('/geekInfo') ||
+        url.includes('/geek/info')
+
+      if (!isResumeResponse) {
+        return
+      }
+
+      try {
+        const data = await response.json()
+        const parsed = parseResumeApiResponse(data)
+        if (!parsed) {
+          return
+        }
+
+        if (encryptGeekId && parsed.encryptGeekId && parsed.encryptGeekId !== encryptGeekId) {
+          console.warn(
+            '[CandidateResume] 捕获到的简历响应与当前候选人不一致:',
+            encryptGeekId,
+            parsed.encryptGeekId
+          )
+          return
+        }
+
+        cleanup(parsed)
+      } catch (error) {
+        console.warn('解析简历API响应失败:', error)
+      }
+    }
+
+    const timer = setTimeout(() => cleanup(null), timeout)
+    page.on('response', handleResponse)
+  })
 }
 
 /**
@@ -292,14 +339,21 @@ export async function getCandidateResumeFromDOM(page: Page): Promise<Partial<Can
     // 尝试多种选择器，适配不同版本的页面
     const selectors = {
       // 聊天详情右侧的候选人信息
-      infoPanel: '.right-box .geek-info, .candidate-panel, .geek-detail',
+      infoPanel:
+        '.right-box .geek-info, .candidate-panel, .geek-detail, .resume-item-content .item-base, .resume-item-content',
       // 头部信息
-      header: '.geek-header, .candidate-header, .user-info',
+      header: '.geek-header, .candidate-header, .user-info, .resume-item-content .geekBaseInfo',
       // 详情区域
-      detail: '.geek-detail-content, .resume-content'
+      detail: '.geek-detail-content, .resume-content, .resume-item-content'
     }
 
     const result: any = {}
+    const textOf = (el: Element | null | undefined): string =>
+      el?.textContent?.replace(/\s+/g, ' ').trim() || ''
+    const infoPanel =
+      document.querySelector(selectors.infoPanel) ||
+      document.querySelector(selectors.detail) ||
+      document.querySelector('.resume-item-content')
 
     // 从Vue组件数据中获取
     const geekInfoVue = document.querySelector('.geek-info')?.__vue__
@@ -324,55 +378,89 @@ export async function getCandidateResumeFromDOM(page: Page): Promise<Partial<Can
     // 尝试从DOM文本中提取
     if (!result.name) {
       const nameEl = document.querySelector(
-        '.geek-info .name, .candidate-name, .user-name, [class*="name"]'
+        '.geek-info .name, .candidate-name, .user-name, .resume-item-content .geek-name, .resume-item-content .name, [class*="name"]'
       )
-      result.name = nameEl?.textContent?.trim()
+      result.name = textOf(nameEl)
     }
 
     if (!result.degree) {
-      const degreeEl = document.querySelector(
-        '.geek-info .degree, .education, [class*="degree"], [class*="education"]'
-      )
-      result.degree = degreeEl?.textContent?.trim()
+      const degreeEl =
+        document.querySelector('.resume-item-content .fz-degree')?.parentElement ||
+        document.querySelector(
+          '.geek-info .degree, .education, [class*="degree"], [class*="education"]'
+        )
+      result.degree = textOf(degreeEl)
     }
 
     if (!result.workYear) {
-      const workYearEl = document.querySelector(
-        '.geek-info .work-year, .work-exp, [class*="work-year"], [class*="workExp"]'
-      )
-      const workYearText = workYearEl?.textContent?.trim() || ''
+      const workYearEl =
+        document.querySelector('.resume-item-content .fz-experience')?.parentElement ||
+        document.querySelector(
+          '.geek-info .work-year, .work-exp, [class*="work-year"], [class*="workExp"]'
+        )
+      const workYearText = textOf(workYearEl)
       const match = workYearText.match(/(\d+)/)
-      result.workYear = match ? parseInt(match[1]) : 0
+      result.workYear = workYearText.includes('应届') ? 0 : match ? parseInt(match[1]) : 0
+    }
+
+    if (!result.age) {
+      const ageEl = document.querySelector('.resume-item-content .fz-age')?.parentElement
+      const ageText = textOf(ageEl)
+      const match = ageText.match(/(\d+)/)
+      result.age = match ? parseInt(match[1]) : 0
+    }
+
+    if (!result.jobStatus) {
+      const statusEl = document.querySelector('.resume-item-content .fz-status')?.parentElement
+      result.jobStatus = textOf(statusEl)
     }
 
     if (!result.currentCompany) {
-      const companyEl = document.querySelector(
-        '.geek-info .company, .current-company, [class*="company"]'
-      )
-      result.currentCompany = companyEl?.textContent?.trim()
+      const workCompanyEl =
+        document.querySelector('.resume-item-content .resume-item .history-item .name span') ||
+        document.querySelector('.geek-info .company, .current-company, [class*="company"]')
+      result.currentCompany = textOf(workCompanyEl)
     }
 
     if (!result.currentJob) {
-      const jobEl = document.querySelector(
-        '.geek-info .position, .job-title, [class*="position"]'
-      )
-      result.currentJob = jobEl?.textContent?.trim()
+      const workJobEl =
+        document.querySelector(
+          '.resume-item-content .resume-item .history-item .name span + em + span'
+        ) || document.querySelector('.geek-info .position, .job-title, [class*="position"]')
+      result.currentJob = textOf(workJobEl)
     }
 
     // 提取技能标签
     if (!result.skills || result.skills.length === 0) {
       const skillEls = document.querySelectorAll(
-        '.geek-info .skill-tag, .skill-list .tag, [class*="skill"] span'
+        '.geek-info .skill-tag, .skill-list .tag, .resume-item-content .professionalSkill .section-content, [class*="skill"] span'
       )
-      result.skills = Array.from(skillEls).map(el => el.textContent?.trim()).filter(Boolean)
+      result.skills = Array.from(skillEls)
+        .flatMap((el) => {
+          const text = textOf(el)
+          if (!text) return []
+          if (el.classList.contains('section-content')) {
+            return text
+              .split(/[;,，、]/)
+              .map((item) => item.trim())
+              .filter(Boolean)
+          }
+          return [text]
+        })
+        .filter(Boolean)
     }
 
     // 提取城市/地点
     if (!result.expectCity) {
-      const cityEl = document.querySelector(
-        '.geek-info .city, .location, [class*="city"], [class*="location"]'
-      )
-      result.expectCity = cityEl?.textContent?.trim()
+      const cityEl =
+        document.querySelector('.resume-item-content .resume-item .label-text') ||
+        document.querySelector('.geek-info .city, .location, [class*="city"], [class*="location"]')
+      result.expectCity = textOf(cityEl)
+    }
+
+    if (!result.advantage) {
+      const advantageEl = infoPanel?.querySelector('.selfDescription')
+      result.advantage = textOf(advantageEl)
     }
 
     return result
@@ -466,35 +554,41 @@ function parseResumeApiResponse(data: any): CandidateResume | null {
     const baseInfo = resumeData.geekBaseInfo || resumeData.baseInfo || resumeData
 
     // 解析工作经历
-    const workExperiences: WorkExperience[] = (resumeData.workExperiences || []).map((exp: any) => ({
-      company: exp.company || exp.companyName || '',
-      position: exp.position || exp.jobTitle || '',
-      startTime: exp.startTime || exp.startDate || '',
-      endTime: exp.endTime || exp.endDate || '',
-      duration: exp.duration || '',
-      description: exp.description || exp.workContent || '',
-      skills: exp.skills || exp.skillTags || []
-    }))
+    const workExperiences: WorkExperience[] = (resumeData.workExperiences || []).map(
+      (exp: any) => ({
+        company: exp.company || exp.companyName || '',
+        position: exp.position || exp.jobTitle || '',
+        startTime: exp.startTime || exp.startDate || '',
+        endTime: exp.endTime || exp.endDate || '',
+        duration: exp.duration || '',
+        description: exp.description || exp.workContent || '',
+        skills: exp.skills || exp.skillTags || []
+      })
+    )
 
     // 解析项目经历
-    const projectExperiences: ProjectExperience[] = (resumeData.projectExperiences || []).map((exp: any) => ({
-      name: exp.name || exp.projectName || '',
-      role: exp.role || exp.projectRole || '',
-      startTime: exp.startTime || exp.startDate || '',
-      endTime: exp.endTime || exp.endDate || '',
-      description: exp.description || exp.projectContent || '',
-      achievement: exp.achievement || exp.projectAchievement || '',
-      skills: exp.skills || exp.skillTags || []
-    }))
+    const projectExperiences: ProjectExperience[] = (resumeData.projectExperiences || []).map(
+      (exp: any) => ({
+        name: exp.name || exp.projectName || '',
+        role: exp.role || exp.projectRole || '',
+        startTime: exp.startTime || exp.startDate || '',
+        endTime: exp.endTime || exp.endDate || '',
+        description: exp.description || exp.projectContent || '',
+        achievement: exp.achievement || exp.projectAchievement || '',
+        skills: exp.skills || exp.skillTags || []
+      })
+    )
 
     // 解析教育经历
-    const educationExperiences: EducationExperience[] = (resumeData.educationExperiences || []).map((exp: any) => ({
-      school: exp.school || exp.schoolName || '',
-      major: exp.major || exp.majorName || '',
-      degree: exp.degree || exp.education || '',
-      startTime: exp.startTime || exp.startDate || '',
-      endTime: exp.endTime || exp.endDate || ''
-    }))
+    const educationExperiences: EducationExperience[] = (resumeData.educationExperiences || []).map(
+      (exp: any) => ({
+        school: exp.school || exp.schoolName || '',
+        major: exp.major || exp.majorName || '',
+        degree: exp.degree || exp.education || '',
+        startTime: exp.startTime || exp.startDate || '',
+        endTime: exp.endTime || exp.endDate || ''
+      })
+    )
 
     return {
       encryptGeekId: baseInfo.encryptGeekId || baseInfo.geekId || '',
@@ -566,4 +660,156 @@ export function formatCandidateSummary(resume: CandidateResume): string {
   if (resume.expectJob) parts.push(`期望: ${resume.expectJob}`)
 
   return parts.join(' | ')
+}
+
+function normalizeResumeLine(value: string | null | undefined): string {
+  return String(value || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
+
+function dedupeCompactLines(lines: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  for (const line of lines) {
+    const normalized = normalizeResumeLine(line)
+    if (!normalized || seen.has(normalized)) {
+      continue
+    }
+    seen.add(normalized)
+    result.push(normalized)
+  }
+
+  return result
+}
+
+export function buildResumeAnalysisSections(
+  resume: Partial<CandidateResume> | null | undefined
+): ResumeAnalysisSection[] {
+  if (!resume) {
+    return []
+  }
+
+  const sections: ResumeAnalysisSection[] = []
+
+  const basicInfoLines = dedupeCompactLines([
+    resume.name ? `姓名：${resume.name}` : '',
+    resume.gender ? `性别：${resume.gender}` : '',
+    typeof resume.age === 'number' && resume.age > 0 ? `年龄：${resume.age}岁` : '',
+    resume.degree ? `学历：${resume.degree}` : '',
+    typeof resume.workYear === 'number'
+      ? `工作年限：${resume.workYear === 0 ? '应届/暂无年限' : `${resume.workYear}年`}`
+      : '',
+    resume.currentCompany ? `当前公司：${resume.currentCompany}` : '',
+    resume.currentJob ? `当前职位：${resume.currentJob}` : '',
+    resume.jobStatus ? `求职状态：${resume.jobStatus}` : ''
+  ])
+  if (basicInfoLines.length > 0) {
+    sections.push({ title: '基本信息', content: basicInfoLines.join('\n') })
+  }
+
+  const intentLines = dedupeCompactLines([
+    resume.expectJob ? `期望职位：${resume.expectJob}` : '',
+    resume.expectCity ? `期望城市：${resume.expectCity}` : '',
+    resume.expectSalary ? `期望薪资：${resume.expectSalary}` : ''
+  ])
+  if (intentLines.length > 0) {
+    sections.push({ title: '求职意向', content: intentLines.join('\n') })
+  }
+
+  const advantage = normalizeResumeLine(resume.advantage)
+  if (advantage) {
+    sections.push({ title: '个人优势', content: advantage })
+  }
+
+  const skills = Array.isArray(resume.skills)
+    ? dedupeCompactLines(resume.skills.map((skill) => String(skill)))
+    : []
+  if (skills.length > 0) {
+    sections.push({ title: '技能标签', content: skills.join('、') })
+  }
+
+  const workExperienceBlocks = Array.isArray(resume.workExperiences)
+    ? resume.workExperiences
+        .map((item, index) =>
+          dedupeCompactLines([
+            item.company ? `${index + 1}. 公司：${item.company}` : `${index + 1}. 工作经历`,
+            item.position ? `职位：${item.position}` : '',
+            item.startTime || item.endTime
+              ? `时间：${normalizeResumeLine(
+                  `${item.startTime || ''}${item.startTime || item.endTime ? ' - ' : ''}${item.endTime || ''}`
+                )}`
+              : '',
+            item.duration ? `时长：${item.duration}` : '',
+            item.description ? `内容：${item.description}` : '',
+            Array.isArray(item.skills) && item.skills.length > 0
+              ? `技能：${item.skills.join('、')}`
+              : ''
+          ]).join('\n')
+        )
+        .filter(Boolean)
+    : []
+  if (workExperienceBlocks.length > 0) {
+    sections.push({ title: '工作经历', content: workExperienceBlocks.join('\n\n') })
+  }
+
+  const projectBlocks = Array.isArray(resume.projectExperiences)
+    ? resume.projectExperiences
+        .map((item, index) =>
+          dedupeCompactLines([
+            item.name ? `${index + 1}. 项目：${item.name}` : `${index + 1}. 项目经历`,
+            item.role ? `角色：${item.role}` : '',
+            item.startTime || item.endTime
+              ? `时间：${normalizeResumeLine(
+                  `${item.startTime || ''}${item.startTime || item.endTime ? ' - ' : ''}${item.endTime || ''}`
+                )}`
+              : '',
+            item.achievement ? `业绩：${item.achievement}` : '',
+            item.description ? `内容：${item.description}` : '',
+            Array.isArray(item.skills) && item.skills.length > 0
+              ? `技能：${item.skills.join('、')}`
+              : ''
+          ]).join('\n')
+        )
+        .filter(Boolean)
+    : []
+  if (projectBlocks.length > 0) {
+    sections.push({ title: '项目经历', content: projectBlocks.join('\n\n') })
+  }
+
+  const educationBlocks = Array.isArray(resume.educationExperiences)
+    ? resume.educationExperiences
+        .map((item, index) =>
+          dedupeCompactLines([
+            item.school ? `${index + 1}. 学校：${item.school}` : `${index + 1}. 教育经历`,
+            item.major ? `专业：${item.major}` : '',
+            item.degree ? `学历：${item.degree}` : '',
+            item.startTime || item.endTime
+              ? `时间：${normalizeResumeLine(
+                  `${item.startTime || ''}${item.startTime || item.endTime ? ' - ' : ''}${item.endTime || ''}`
+                )}`
+              : ''
+          ]).join('\n')
+        )
+        .filter(Boolean)
+    : []
+  if (educationBlocks.length > 0) {
+    sections.push({ title: '教育经历', content: educationBlocks.join('\n\n') })
+  }
+
+  return sections
+}
+
+export function formatResumeForAnalysis(
+  resume: Partial<CandidateResume> | null | undefined
+): string {
+  return buildResumeAnalysisSections(resume)
+    .map((section) => `## ${section.title}\n${section.content}`)
+    .join('\n\n')
+    .trim()
 }

@@ -450,3 +450,109 @@ export const countInterviewCandidatesByStatus = async () => {
   })
   return res
 }
+
+// ==================== Recommend Talent DB Functions ====================
+
+export const getRecommendJobConfigs = async () => {
+  const res = await createWorkerPromise({
+    type: 'getRecommendJobConfigs'
+  })
+  return res
+}
+
+export const saveRecommendJobConfig = async (config: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecommendJobConfig',
+    config
+  })
+  return res
+}
+
+export const deleteRecommendJobConfig = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'deleteRecommendJobConfig',
+    id
+  })
+  return res
+}
+
+export const getRecommendCandidates = async (params?: {
+  sessionId?: string
+  encryptJobId?: string
+  minScore?: number
+  maxScore?: number
+  recommendOnly?: boolean
+  geekName?: string
+  page?: number
+  pageSize?: number
+}) => {
+  const res = await createWorkerPromise({
+    type: 'getRecommendCandidates',
+    ...params
+  })
+  return res
+}
+
+export const saveRecommendCandidate = async (candidate: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecommendCandidate',
+    ...candidate
+  })
+  return res
+}
+
+export const getRecommendCandidateById = async (id: number) => {
+  const res = await createWorkerPromise({
+    type: 'getRecommendCandidateById',
+    id
+  })
+  return res
+}
+
+export const getRecommendResumeSnapshot = async (candidateId: number) => {
+  const res = await createWorkerPromise({
+    type: 'getRecommendResumeSnapshot',
+    candidateId
+  })
+  return res
+}
+
+export const saveRecommendResumeSnapshot = async (snapshot: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecommendResumeSnapshot',
+    ...snapshot
+  })
+  return res
+}
+
+export const getRecommendRunCheckpoint = async (sessionId: string) => {
+  const res = await createWorkerPromise({
+    type: 'getRecommendRunCheckpoint',
+    sessionId
+  })
+  return res
+}
+
+export const saveRecommendRunCheckpoint = async (checkpoint: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveRecommendRunCheckpoint',
+    ...checkpoint
+  })
+  return res
+}
+
+export const updateRecommendRunCheckpoint = async (sessionId: string, updates: any) => {
+  const res = await createWorkerPromise({
+    type: 'updateRecommendRunCheckpoint',
+    sessionId,
+    ...updates
+  })
+  return res
+}
+
+export const getRecommendSessions = async () => {
+  const res = await createWorkerPromise({
+    type: 'getRecommendSessions'
+  })
+  return res
+}

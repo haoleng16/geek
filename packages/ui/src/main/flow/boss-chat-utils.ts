@@ -35,18 +35,18 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
   console.log('[sendMessage] 文本内容预览:', text?.substring(0, 100))
 
   try {
-    // 定义所有可能的选择器
     const inputSelectors = [
+      '.boss-chat-editor-input',
       '.chat-conversation .message-controls .chat-input',
       '.chat-conversation .chat-input',
       '.message-controls .chat-input',
       '.chat-input',
       'textarea[placeholder*="输入"]',
       'textarea[placeholder*="发送"]',
+      '[contenteditable="true"]',
       '.conversation-footer textarea',
       '.chat-footer textarea'
     ]
-
     let chatInputHandle: import('puppeteer').ElementHandle<Element> | null = null
     let foundSelector = ''
 
@@ -84,41 +84,119 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
       return false
     }
 
-    // 点击输入框，获取焦点
     console.log('[sendMessage] 点击输入框获取焦点...')
     await chatInputHandle.click()
     await sleep(300)
     await chatInputHandle.click()
     await sleep(200)
 
-    // 清空现有内容并输入文本
-    console.log('[sendMessage] 清空输入框并输入文本...')
-    await page.evaluate((selector) => {
-      const input = document.querySelector(selector) as HTMLTextAreaElement
-      if (input) {
-        input.value = ''
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-        input.dispatchEvent(new Event('change', { bubbles: true }))
-      }
-    }, foundSelector)
+    console.log('[sendMessage] 尝试使用 execCommand 设置输入框内容...')
+    let setInputSuccess = false
+    try {
+      setInputSuccess = await page.evaluate((selector, content) => {
+        const input = document.querySelector(selector) as HTMLElement | null
+        if (!input) return false
 
-    // 输入文本（模拟真实打字）
-    console.log('[sendMessage] 模拟打字输入...')
-    await chatInputHandle.type(text, {
-      delay: 30 + Math.random() * 20  // 30-50ms随机延迟
-    })
+        input.focus()
 
-    // 验证输入是否成功
+        if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+          input.select()
+          document.execCommand('delete', false)
+          document.execCommand('insertText', false, content)
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          input.dispatchEvent(new Event('change', { bubbles: true }))
+          return input.value === content
+        }
+
+        if (input.isContentEditable) {
+          const selection = window.getSelection()
+          const range = document.createRange()
+          range.selectNodeContents(input)
+          selection?.removeAllRanges()
+          selection?.addRange(range)
+          document.execCommand('delete', false)
+          document.execCommand('insertText', false, content)
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, data: content, inputType: 'insertText' }))
+          return (input.innerText || input.textContent || '').trim() === content.trim()
+        }
+
+        return false
+      }, foundSelector, text)
+      console.log('[sendMessage] execCommand 设置结果:', setInputSuccess)
+    } catch (error) {
+      console.error('[sendMessage] execCommand 设置失败:', error)
+    }
+
+    if (!setInputSuccess) {
+      console.log('[sendMessage] 回退到 type 方法输入...')
+      await page.evaluate((selector) => {
+        const input = document.querySelector(selector) as HTMLElement | null
+        if (!input) return
+
+        if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+          input.value = ''
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          input.dispatchEvent(new Event('change', { bubbles: true }))
+          return
+        }
+
+        if (input.isContentEditable) {
+          input.textContent = ''
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, data: '', inputType: 'deleteContentBackward' }))
+        }
+      }, foundSelector)
+
+      await sleep(100)
+      await chatInputHandle.type(text, {
+        delay: 30 + Math.random() * 20
+      })
+    }
+
     const inputValue = await page.evaluate((selector) => {
-      const input = document.querySelector(selector) as HTMLTextAreaElement
-      return input?.value || ''
+      const input = document.querySelector(selector) as HTMLElement | null
+      if (!input) return ''
+
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+        return input.value || ''
+      }
+
+      return input.innerText || input.textContent || ''
     }, foundSelector)
     console.log('[sendMessage] 输入框当前值长度:', inputValue.length)
 
+    if (!inputValue.trim()) {
+      console.error('[sendMessage] 输入框内容为空，取消发送')
+      return false
+    }
+
     await sleep(500 + Math.random() * 300)
 
-    // 点击发送按钮
+    console.log('[sendMessage] 尝试按 Enter 发送...')
+    await chatInputHandle.press('Enter')
+    await sleep(600)
+
+    const afterEnterValue = await page.evaluate((selector) => {
+      const input = document.querySelector(selector) as HTMLElement | null
+      if (!input) return ''
+
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+        return input.value || ''
+      }
+
+      return input.innerText || input.textContent || ''
+    }, foundSelector)
+    console.log('[sendMessage] Enter 后输入框长度:', afterEnterValue.length)
+
+    if (!afterEnterValue.trim()) {
+      console.log('[sendMessage] Enter 发送成功')
+      return true
+    }
+
     const sendButtonSelectors = [
+      '.chat-conversation .message-controls .chat-op .btn-send:not(.disabled)',
+      '.chat-conversation .message-controls .btn-send:not(.disabled)',
+      '.message-controls .btn-send:not(.disabled)',
+      '.boss-chat-editor-wrap .btn-send:not(.disabled)',
       '.chat-conversation .message-controls .chat-op .btn-send:not(.disabled)',
       '.chat-conversation .btn-send:not(.disabled)',
       '.btn-send:not(.disabled)',
@@ -154,10 +232,23 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
 
     console.log('[sendMessage] 点击发送按钮...')
     await sendButton.click()
-    await sleep(500)
+    await sleep(800)
 
-    console.log('[sendMessage] 消息发送成功')
-    return true
+    const afterClickValue = await page.evaluate((selector) => {
+      const input = document.querySelector(selector) as HTMLElement | null
+      if (!input) return ''
+
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+        return input.value || ''
+      }
+
+      return input.innerText || input.textContent || ''
+    }, foundSelector)
+
+    const sendSuccess = !afterClickValue.trim()
+    console.log('[sendMessage] 点击发送后输入框长度:', afterClickValue.length)
+    console.log('[sendMessage] 消息发送结果:', sendSuccess)
+    return sendSuccess
   } catch (error) {
     console.error('[sendMessage] 发送消息失败:', error)
     return false

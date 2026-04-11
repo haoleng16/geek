@@ -57,6 +57,11 @@ const runMode = commandlineArgs['mode']
       runEntry()
       break
     }
+    case 'recommendTalentMain': {
+      const { runEntry } = await import('./flow/RECOMMEND_TALENT_MAIN/index')
+      runEntry()
+      break
+    }
     case 'interviewAutoMain': {
       const { runEntry } = await import('./flow/INTERVIEW_AUTO_MAIN/index')
       runEntry()

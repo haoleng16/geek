@@ -4,13 +4,6 @@ import { gtagRenderer } from '@renderer/utils/gtag'
 
 const routes: Array<RouteRecordRaw> = [
   {
-    path: '/first-run-readme',
-    component: () => import('@renderer/page/FirstRunReadme/index.vue'),
-    meta: {
-      title: '初次使用必读'
-    }
-  },
-  {
     path: '/cookieAssistant',
     component: () => import('@renderer/page/CookieAssistant/index.vue'),
     meta: {
@@ -104,6 +97,20 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('@renderer/page/MainLayout/InterviewEmailSetting.vue'),
         meta: {
           title: '邮件设置'
+        }
+      },
+      {
+        path: 'RecommendTalent',
+        component: () => import('@renderer/page/MainLayout/RecommendTalent.vue'),
+        meta: {
+          title: '推荐牛人'
+        }
+      },
+      {
+        path: 'RecommendTalentData',
+        component: () => import('@renderer/page/MainLayout/RecommendTalentData.vue'),
+        meta: {
+          title: '推荐牛人数据'
         }
       }
     ]

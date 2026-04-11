@@ -13,6 +13,7 @@ const STATUS_LABELS: Record<string, string> = {
   waiting_round_1: '等待第1轮',
   waiting_round_2: '等待第2轮',
   waiting_round_n: '等待回复中',
+  reply_extraction_failed: '回复提取失败',
   passed: '已通过',
   rejected: '已拒绝',
   resume_requested: '已邀请简历',

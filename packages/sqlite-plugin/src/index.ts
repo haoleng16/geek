@@ -3,36 +3,40 @@ import { type DataSource } from "typeorm";
 
 import { BossInfo } from "./entity/BossInfo";
 import { BossInfoChangeLog } from "./entity/BossInfoChangeLog";
-import { ChatStartupFrom, ChatStartupLog } from './entity/ChatStartupLog';
+import { ChatStartupFrom, ChatStartupLog } from "./entity/ChatStartupLog";
 import { CompanyInfoChangeLog } from "./entity/CompanyInfoChangeLog";
 import { CompanyInfo } from "./entity/CompanyInfo";
 import { JobInfo } from "./entity/JobInfo";
 import { JobInfoChangeLog } from "./entity/JobInfoChangeLog";
 import { BossActiveStatusRecord } from "./entity/BossActiveStatusRecord";
 import { UserInfo } from "./entity/UserInfo";
-import { AutoStartChatRunRecord } from './entity/AutoStartChatRunRecord';
-import { MarkAsNotSuitLog } from "./entity/MarkAsNotSuitLog"
+import { AutoStartChatRunRecord } from "./entity/AutoStartChatRunRecord";
+import { MarkAsNotSuitLog } from "./entity/MarkAsNotSuitLog";
 import { VChatStartupLog } from "./entity/VChatStartupLog";
 import { VJobLibrary } from "./entity/VJobLibrary";
-import { VMarkAsNotSuitLog } from "./entity/VMarkAsNotSuitLog"
-import { ChatMessageRecord } from './entity/ChatMessageRecord'
-import { LlmModelUsageRecord } from './entity/LlmModelUsageRecord'
-import { JobHireStatusRecord } from './entity/JobHireStatusRecord'
-import { RecruiterJobConfig } from './entity/RecruiterJobConfig'
-import { CandidateConversation } from './entity/CandidateConversation'
-import { CandidateResumeRecord } from './entity/CandidateResumeRecord'
-import { RecruiterProcessLog } from './entity/RecruiterProcessLog'
-import { RecruiterDailyStats } from './entity/RecruiterDailyStats'
-import { RecruiterTemplate } from './entity/RecruiterTemplate'
-import { RecruiterContactedCandidate } from './entity/RecruiterContactedCandidate'
-import { SmartReplyRecord } from './entity/SmartReplyRecord'
-import { InterviewJobPosition } from './entity/InterviewJobPosition'
-import { InterviewQuestionRound } from './entity/InterviewQuestionRound'
-import { InterviewCandidate } from './entity/InterviewCandidate'
-import { InterviewQaRecord } from './entity/InterviewQaRecord'
-import { InterviewResume } from './entity/InterviewResume'
-import { InterviewSystemConfig } from './entity/InterviewSystemConfig'
-import { InterviewOperationLog } from './entity/InterviewOperationLog'
+import { VMarkAsNotSuitLog } from "./entity/VMarkAsNotSuitLog";
+import { ChatMessageRecord } from "./entity/ChatMessageRecord";
+import { LlmModelUsageRecord } from "./entity/LlmModelUsageRecord";
+import { JobHireStatusRecord } from "./entity/JobHireStatusRecord";
+import { RecruiterJobConfig } from "./entity/RecruiterJobConfig";
+import { CandidateConversation } from "./entity/CandidateConversation";
+import { CandidateResumeRecord } from "./entity/CandidateResumeRecord";
+import { RecruiterProcessLog } from "./entity/RecruiterProcessLog";
+import { RecruiterDailyStats } from "./entity/RecruiterDailyStats";
+import { RecruiterTemplate } from "./entity/RecruiterTemplate";
+import { RecruiterContactedCandidate } from "./entity/RecruiterContactedCandidate";
+import { SmartReplyRecord } from "./entity/SmartReplyRecord";
+import { InterviewJobPosition } from "./entity/InterviewJobPosition";
+import { InterviewQuestionRound } from "./entity/InterviewQuestionRound";
+import { InterviewCandidate } from "./entity/InterviewCandidate";
+import { InterviewQaRecord } from "./entity/InterviewQaRecord";
+import { InterviewResume } from "./entity/InterviewResume";
+import { InterviewSystemConfig } from "./entity/InterviewSystemConfig";
+import { InterviewOperationLog } from "./entity/InterviewOperationLog";
+import { RecommendJobConfig } from "./entity/RecommendJobConfig";
+import { RecommendCandidate } from "./entity/RecommendCandidate";
+import { RecommendResumeSnapshot } from "./entity/RecommendResumeSnapshot";
+import { RecommendRunCheckpoint } from "./entity/RecommendRunCheckpoint";
 
 import {
   saveChatStartupRecord,
@@ -41,10 +45,10 @@ import {
   getNotSuitMarkRecordsInLastSomeDays,
   getChatStartupRecordsInLastSomeDays,
   getBossIdsByJobIds,
-  saveJobHireStatusRecord
+  saveJobHireStatusRecord,
 } from "./handlers";
 import { UpdateChatStartupLogTable1729182577167 } from "./migrations/1729182577167-UpdateChatStartupLogTable";
-import minimist from 'minimist'
+import minimist from "minimist";
 import { UpdateBossInfoTable1732032381304 } from "./migrations/1732032381304-UpdateBossInfoTable";
 import { JobHireStatus, MarkAsNotSuitOp, MarkAsNotSuitReason } from "./enums";
 import { AddColumnForMarkAsNotSuitLog1746092370665 } from "./migrations/1746092370665-AddColumnForMarkAsNotSuitLog";
@@ -63,11 +67,15 @@ import { AddNegationWordsToInterviewQuestionRound1800000000003 } from "./migrati
 import { CleanDuplicateAnswerContent1800000000004 } from "./migrations/1800000000004-CleanDuplicateAnswerContent";
 import { AddFilterFieldsToInterviewJobPosition1800000000005 } from "./migrations/1800000000005-AddFilterFieldsToInterviewJobPosition";
 import { PureLlmScoring1800000000006 } from "./migrations/1800000000006-PureLlmScoring";
-import chunk from 'lodash/chunk'
-import * as typeorm from 'typeorm'
+import { AddRecommendTalentTables1811111111111 } from "./migrations/1811111111111-AddRecommendTalentTables";
+import { AddWorkYearOptionsToRecommendJobConfig1811111111112 } from "./migrations/1811111111112-AddWorkYearOptionsToRecommendJobConfig";
+import { UpdateRecommendJobConfigConstraints1811111111113 } from "./migrations/1811111111113-UpdateRecommendJobConfigConstraints";
+import { AddDomTextToRecommendResumeSnapshot1811111111114 } from "./migrations/1811111111114-AddDomTextToRecommendResumeSnapshot";
+import chunk from "lodash/chunk";
+import * as typeorm from "typeorm";
 
 export function initDb(dbFilePath) {
-  const { DataSource } = typeorm
+  const { DataSource } = typeorm;
   const appDataSource = new DataSource({
     type: "better-sqlite3",
     synchronize: false,
@@ -107,6 +115,10 @@ export function initDb(dbFilePath) {
       InterviewResume,
       InterviewSystemConfig,
       InterviewOperationLog,
+      RecommendJobConfig,
+      RecommendCandidate,
+      RecommendResumeSnapshot,
+      RecommendRunCheckpoint,
     ],
     migrations: [
       Init1000000000000,
@@ -126,9 +138,13 @@ export function initDb(dbFilePath) {
       AddNegationWordsToInterviewQuestionRound1800000000003,
       CleanDuplicateAnswerContent1800000000004,
       AddFilterFieldsToInterviewJobPosition1800000000005,
-      PureLlmScoring1800000000006
+      PureLlmScoring1800000000006,
+      AddRecommendTalentTables1811111111111,
+      AddWorkYearOptionsToRecommendJobConfig1811111111112,
+      UpdateRecommendJobConfigConstraints1811111111113,
+      AddDomTextToRecommendResumeSnapshot1811111111114,
     ],
-    migrationsRun: true
+    migrationsRun: true,
   });
   return appDataSource.initialize();
 }
@@ -139,31 +155,32 @@ export default class SqlitePlugin {
 
   constructor(dbFilePath) {
     this.initPromise = initDb(dbFilePath);
-    this.runRecordId = minimist(process.argv.slice(2))['run-record-id'] ?? 0
+    this.runRecordId = minimist(process.argv.slice(2))["run-record-id"] ?? 0;
   }
 
-  userInfo = null
+  userInfo = null;
 
   apply(hooks) {
-    hooks.pageGotten.tap(
-      'SqlitePlugin',
-      (page) => {
-        page.on('response', async (response) => {
-          const ds = await this.initPromise;
-          if (response.url().startsWith('https://www.zhipin.com/wapi/zpgeek/job/detail.json')) {
-            const data = await response.json()
-            if (data.code === 0) {
-              await saveJobInfoFromRecommendPage(await ds, data.zpData)
-              await saveJobHireStatusRecord(await ds, {
-                encryptJobId: data.zpData.jobInfo.encryptId,
-                hireStatus: JobHireStatus.HIRING,
-                lastSeenDate: new Date()
-              })
-            }
+    hooks.pageGotten.tap("SqlitePlugin", (page) => {
+      page.on("response", async (response) => {
+        const ds = await this.initPromise;
+        if (
+          response
+            .url()
+            .startsWith("https://www.zhipin.com/wapi/zpgeek/job/detail.json")
+        ) {
+          const data = await response.json();
+          if (data.code === 0) {
+            await saveJobInfoFromRecommendPage(await ds, data.zpData);
+            await saveJobHireStatusRecord(await ds, {
+              encryptJobId: data.zpData.jobInfo.encryptId,
+              hireStatus: JobHireStatus.HIRING,
+              lastSeenDate: new Date(),
+            });
           }
-        })
-      }
-    )
+        }
+      });
+    });
     hooks.userInfoResponse.tapPromise(
       "SqlitePlugin",
       async (userInfoResponse) => {
@@ -171,7 +188,7 @@ export default class SqlitePlugin {
           return;
         }
         const { zpData: userInfo } = userInfoResponse;
-        this.userInfo = userInfo
+        this.userInfo = userInfo;
         console.log(userInfo);
 
         const ds = await this.initPromise;
@@ -182,7 +199,7 @@ export default class SqlitePlugin {
         user.name = userInfo.name;
 
         return await userInfoRepository.save(user);
-      }
+      },
     );
     hooks.mainFlowWillLaunch.tapPromise(
       "SqlitePlugin",
@@ -192,110 +209,139 @@ export default class SqlitePlugin {
         expectCityNotMatchStrategy,
         blockJobNotSuit,
         blockBossNotActive,
-        blockBossNotNewChat
+        blockBossNotNewChat,
       }) => {
         if (
           jobNotMatchStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
           jobNotActiveStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
-          expectCityNotMatchStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL
+          expectCityNotMatchStrategy ===
+            MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL
         ) {
           const ds = await this.initPromise;
-          const last7DayMarkRecords = (await getNotSuitMarkRecordsInLastSomeDays(ds, 7)) ?? [];
+          const last7DayMarkRecords =
+            (await getNotSuitMarkRecordsInLastSomeDays(ds, 7)) ?? [];
           if (
             jobNotMatchStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
             jobNotMatchStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_BOSS
           ) {
             last7DayMarkRecords
-              .filter(it =>
+              .filter((it) =>
                 [
                   MarkAsNotSuitReason.JOB_NOT_SUIT,
-                  MarkAsNotSuitReason.USER_MANUAL_OPERATION_WITH_UNKNOWN_REASON
-                ].includes(it.markReason)
+                  MarkAsNotSuitReason.USER_MANUAL_OPERATION_WITH_UNKNOWN_REASON,
+                ].includes(it.markReason),
               )
-              .map(
-                it => it.encryptJobId
-              )
-              .forEach(
-                id => blockJobNotSuit.add(id)
-              )
+              .map((it) => it.encryptJobId)
+              .forEach((id) => blockJobNotSuit.add(id));
           }
           if (
-            jobNotActiveStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
+            jobNotActiveStrategy ===
+              MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
             jobNotActiveStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_BOSS
           ) {
             last7DayMarkRecords
-              .filter(it => it.markReason === MarkAsNotSuitReason.BOSS_INACTIVE)
-              .map(
-                it => it.encryptJobId
+              .filter(
+                (it) => it.markReason === MarkAsNotSuitReason.BOSS_INACTIVE,
               )
-              .forEach(
-                id => blockJobNotSuit.add(id)
-              )
+              .map((it) => it.encryptJobId)
+              .forEach((id) => blockJobNotSuit.add(id));
           }
           if (
-            expectCityNotMatchStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
-            expectCityNotMatchStrategy === MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_BOSS
+            expectCityNotMatchStrategy ===
+              MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_LOCAL ||
+            expectCityNotMatchStrategy ===
+              MarkAsNotSuitOp.MARK_AS_NOT_SUIT_ON_BOSS
           ) {
             last7DayMarkRecords
-              .filter(it => it.markReason === MarkAsNotSuitReason.JOB_CITY_NOT_SUIT)
-              .map(
-                it => it.encryptJobId
+              .filter(
+                (it) => it.markReason === MarkAsNotSuitReason.JOB_CITY_NOT_SUIT,
               )
-              .forEach(
-                id => blockJobNotSuit.add(id)
-              )
+              .map((it) => it.encryptJobId)
+              .forEach((id) => blockJobNotSuit.add(id));
           }
-          const last30DayChatStartupRecords = (await getChatStartupRecordsInLastSomeDays(ds, 30)) ?? [];
-          const chattedJobIds = last30DayChatStartupRecords.map(it => it.encryptJobId)
+          const last30DayChatStartupRecords =
+            (await getChatStartupRecordsInLastSomeDays(ds, 30)) ?? [];
+          const chattedJobIds = last30DayChatStartupRecords.map(
+            (it) => it.encryptJobId,
+          );
           if (chattedJobIds.length === 0) {
-            return
+            return;
           }
-          const chattedJobIdChunks = chunk(chattedJobIds, 200)
+          const chattedJobIdChunks = chunk(chattedJobIds, 200);
           const chattedBossIds = [];
           for (const chattedJobIdChunk of chattedJobIdChunks) {
-            const chattedBossIdChunk = ((await getBossIdsByJobIds(ds, chattedJobIdChunk)) ?? []).map(it => it.encryptBossId)
-            chattedBossIds.push(...chattedBossIdChunk)
+            const chattedBossIdChunk = (
+              (await getBossIdsByJobIds(ds, chattedJobIdChunk)) ?? []
+            ).map((it) => it.encryptBossId);
+            chattedBossIds.push(...chattedBossIdChunk);
           }
           for (const id of chattedBossIds) {
-            blockBossNotNewChat.add(id)
+            blockBossNotNewChat.add(id);
           }
         }
-      }
+      },
     );
 
-    hooks.jobDetailIsGetFromRecommendList.tapPromise("SqlitePlugin", async (_jobInfo) => {
-      const ds = await this.initPromise;
-      await saveJobInfoFromRecommendPage(ds, _jobInfo);
-    });
+    hooks.jobDetailIsGetFromRecommendList.tapPromise(
+      "SqlitePlugin",
+      async (_jobInfo) => {
+        const ds = await this.initPromise;
+        await saveJobInfoFromRecommendPage(ds, _jobInfo);
+      },
+    );
 
-    hooks.jobDetailIsGetFromRecommendList.tapPromise("SqlitePlugin", async ({ jobInfo }) => {
-      const ds = await this.initPromise;
-      return await saveJobHireStatusRecord(ds, {
-        encryptJobId: jobInfo.encryptId,
-        hireStatus: JobHireStatus.HIRING,
-        lastSeenDate: new Date()
-      });
-    });
+    hooks.jobDetailIsGetFromRecommendList.tapPromise(
+      "SqlitePlugin",
+      async ({ jobInfo }) => {
+        const ds = await this.initPromise;
+        return await saveJobHireStatusRecord(ds, {
+          encryptJobId: jobInfo.encryptId,
+          hireStatus: JobHireStatus.HIRING,
+          lastSeenDate: new Date(),
+        });
+      },
+    );
 
-    hooks.newChatStartup.tapPromise("SqlitePlugin", async (_jobInfo, { chatStartupFrom = ChatStartupFrom.AutoFromRecommendList, jobSource = undefined } = {}) => {
-      const ds = await this.initPromise;
-      return await saveChatStartupRecord(ds, _jobInfo, this.userInfo, {
-        autoStartupChatRecordId: this.runRecordId,
-        chatStartupFrom,
-        jobSource
-      });
-    });
+    hooks.newChatStartup.tapPromise(
+      "SqlitePlugin",
+      async (
+        _jobInfo,
+        {
+          chatStartupFrom = ChatStartupFrom.AutoFromRecommendList,
+          jobSource = undefined,
+        } = {},
+      ) => {
+        const ds = await this.initPromise;
+        return await saveChatStartupRecord(ds, _jobInfo, this.userInfo, {
+          autoStartupChatRecordId: this.runRecordId,
+          chatStartupFrom,
+          jobSource,
+        });
+      },
+    );
 
-    hooks.jobMarkedAsNotSuit.tapPromise("SqlitePlugin", async (_jobInfo, { markFrom = ChatStartupFrom.AutoFromRecommendList, markReason = undefined, extInfo = undefined, markOp = undefined, jobSource = undefined } = {}) => {
-      const ds = await this.initPromise;
-      return await saveMarkAsNotSuitRecord(ds, _jobInfo, this.userInfo, {
-        autoStartupChatRecordId: this.runRecordId,
-        markFrom,
-        markReason,
-        extInfo,
-        markOp,
-        jobSource
-      });
-    });
+    hooks.jobMarkedAsNotSuit.tapPromise(
+      "SqlitePlugin",
+      async (
+        _jobInfo,
+        {
+          markFrom = ChatStartupFrom.AutoFromRecommendList,
+          markReason = undefined,
+          extInfo = undefined,
+          markOp = undefined,
+          jobSource = undefined,
+        } = {},
+      ) => {
+        const ds = await this.initPromise;
+        return await saveMarkAsNotSuitRecord(ds, _jobInfo, this.userInfo, {
+          autoStartupChatRecordId: this.runRecordId,
+          markFrom,
+          markReason,
+          extInfo,
+          markOp,
+          jobSource,
+        });
+      },
+    );
   }
 }
