@@ -29,7 +29,13 @@ import { sendMessage } from '../boss-chat-utils'
 // 导入面试模块
 import { matchJobPositionByName } from './job-matcher'
 import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest } from './question-sender'
-import { getLatestCandidateAnswer, mergeMessagesInWindow, deduplicateSentencesInText, isDuplicateAnswer } from './answer-collector'
+import {
+  getLatestCandidateAnswer,
+  mergeMessagesInWindow,
+  deduplicateSentencesInText,
+  isDuplicateAnswer,
+  isLatestMessageFromCandidate
+} from './answer-collector'
 import { scoreAnswer } from './scorer'
 import { detectResumeSent, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
 import { sendResumeEmail } from './email-sender'
@@ -39,6 +45,7 @@ import {
   saveInterviewCandidate,
   getInterviewCandidate,
   getInterviewJobPositionWithDetails,
+  getPendingInterviewCandidates,
   updateInterviewCandidateStatus,
   getInterviewQaRecordList,
   saveInterviewOperationLog
@@ -288,7 +295,15 @@ const mainLoop = async () => {
 
         // 如果滚动后仍无未读消息，等待下一个周期
         if (unreadItems.length === 0) {
-          console.log('[Interview MainLoop] 滚动后仍未发现未读消息，等待下一周期...')
+          const handledCurrentChat = await processCurrentOpenChatWhenNoUnread(
+            dataSource!,
+            pageMapByName.boss!,
+            cfg
+          )
+          console.log(
+            '[Interview MainLoop] 滚动后仍未发现未读消息，当前会话兜底检查结果:',
+            handledCurrentChat ? '已处理' : '无新回复'
+          )
           await sleep(cfg.scanIntervalSeconds * 1000)
           continue
         }
@@ -399,6 +414,153 @@ const mainLoop = async () => {
       })
       await sleep(5000)
     }
+  }
+}
+
+async function processCurrentOpenChatWhenNoUnread(
+  ds: DataSource,
+  page: Page,
+  config: any
+): Promise<boolean> {
+  try {
+    const trackedStatuses = [
+      InterviewCandidateStatus.WAITING_ROUND_1,
+      InterviewCandidateStatus.WAITING_ROUND_2,
+      InterviewCandidateStatus.WAITING_ROUND_N,
+      InterviewCandidateStatus.REPLY_EXTRACTION_FAILED,
+      InterviewCandidateStatus.RESUME_REQUESTED,
+      InterviewCandidateStatus.RESUME_AGREED
+    ]
+    const pendingCandidates = await getPendingInterviewCandidates(ds, trackedStatuses)
+
+    const candidate = await resolveCurrentOpenCandidate(ds, page, pendingCandidates)
+    if (candidate) {
+      const handledCurrent = await processFallbackCandidate(ds, page, candidate, config)
+      if (handledCurrent) {
+        return true
+      }
+    }
+
+    const friendListData = await getChatList(page)
+    for (const pendingCandidate of pendingCandidates) {
+      if (
+        candidate?.id &&
+        pendingCandidate.id === candidate.id
+      ) {
+        continue
+      }
+
+      const matchedChat = friendListData.find((item) => {
+        if (pendingCandidate.encryptGeekId && item.encryptGeekId) {
+          return item.encryptGeekId === pendingCandidate.encryptGeekId
+        }
+        return !!pendingCandidate.geekName && pendingCandidate.geekName === item.name
+      })
+
+      if (!matchedChat) {
+        continue
+      }
+
+      await clickChatItemByIdentifier(page, {
+        name: matchedChat.name || pendingCandidate.geekName,
+        encryptGeekId: matchedChat.encryptGeekId || pendingCandidate.encryptGeekId
+      })
+      await sleep(1500)
+
+      const handledVisiblePending = await processFallbackCandidate(
+        ds,
+        page,
+        pendingCandidate,
+        config
+      )
+      if (handledVisiblePending) {
+        return true
+      }
+    }
+
+    return false
+  } catch (error) {
+    console.error('[Interview MainLoop] 当前会话兜底检查失败:', error)
+    return false
+  }
+}
+
+async function resolveCurrentOpenCandidate(
+  ds: DataSource,
+  page: Page,
+  pendingCandidates: InterviewCandidate[]
+): Promise<InterviewCandidate | null> {
+  const currentGeekInfo = await getCurrentChatGeekInfo(page)
+  if (!currentGeekInfo) {
+    return null
+  }
+
+  if (currentGeekInfo.encryptGeekId) {
+    const matchedById = await getInterviewCandidate(
+      ds,
+      currentGeekInfo.encryptGeekId,
+      currentGeekInfo.encryptJobId || ''
+    )
+    if (matchedById) {
+      return matchedById
+    }
+  }
+
+  if (currentGeekInfo.name) {
+    const matchedByName = pendingCandidates.find((item) => item.geekName === currentGeekInfo.name)
+    if (matchedByName) {
+      return matchedByName
+    }
+  }
+
+  return null
+}
+
+async function processFallbackCandidate(
+  ds: DataSource,
+  page: Page,
+  candidate: InterviewCandidate,
+  config: any
+): Promise<boolean> {
+  try {
+    const waitingStatuses = new Set([
+      InterviewCandidateStatus.WAITING_ROUND_1,
+      InterviewCandidateStatus.WAITING_ROUND_2,
+      InterviewCandidateStatus.WAITING_ROUND_N,
+      InterviewCandidateStatus.REPLY_EXTRACTION_FAILED
+    ])
+    const resumeStatuses = new Set([
+      InterviewCandidateStatus.RESUME_REQUESTED,
+      InterviewCandidateStatus.RESUME_AGREED
+    ])
+
+    if (!waitingStatuses.has(candidate.status) && !resumeStatuses.has(candidate.status)) {
+      return false
+    }
+
+    if (waitingStatuses.has(candidate.status)) {
+      const latestIsCandidate = await isLatestMessageFromCandidate(page)
+      if (!latestIsCandidate) {
+        return false
+      }
+    }
+
+    let jobPosition: any = null
+    if (candidate.jobPositionId) {
+      jobPosition = await getInterviewJobPositionWithDetails(ds, candidate.jobPositionId)
+    }
+
+    if (waitingStatuses.has(candidate.status) && !jobPosition) {
+      console.log('[Interview MainLoop] 当前会话兜底检查跳过：未找到岗位配置', candidate.id)
+      return false
+    }
+
+    console.log('[Interview MainLoop] 未读为空，兜底处理候选人:', candidate.geekName, candidate.status)
+    await handleCandidateByStatus(ds, page, candidate, jobPosition, config)
+    return true
+  } catch (error) {
+    console.error('[Interview MainLoop] 兜底处理候选人失败:', error)
+    return false
   }
 }
 

@@ -333,23 +333,45 @@ export async function getCurrentChatGeekInfo(page: Page): Promise<{
 } | null> {
   try {
     const info = await page.evaluate(() => {
-      // 从Vue组件获取
+      // 方法1：从聊天记录 Vue 组件获取
       const chatRecordVue = document.querySelector('.chat-conversation .chat-record')?.__vue__
-      const geek = chatRecordVue?.geek || chatRecordVue?.boss
-
-      if (geek) {
+      if (chatRecordVue) {
+        const geek = chatRecordVue.geek || chatRecordVue.boss || chatRecordVue.$props?.geek || {}
+        const job = chatRecordVue.job || chatRecordVue.$props?.job || {}
         return {
-          name: geek.name || '',
-          encryptGeekId: geek.encryptGeekId || geek.encryptBossId || '',
-          encryptJobId: geek.encryptJobId || ''
+          name: geek.name || geek.geekName || '',
+          encryptGeekId: geek.encryptGeekId || geek.encryptBossId || geek.securityId || '',
+          encryptJobId: geek.encryptJobId || job.encryptJobId || job.securityId || ''
         }
       }
 
-      // 从DOM获取
-      const nameEl = document.querySelector('.chat-conversation .user-name, .geek-name')
-      const name = nameEl?.textContent?.trim() || ''
+      // 方法2：从聊天头部 Vue 组件获取
+      const headerEl = document.querySelector('.chat-conversation .chat-header, .conversation-header')
+      if (headerEl) {
+        const vue = (headerEl as any).__vue__
+        if (vue) {
+          const geek = vue.geek || vue.boss || vue.$props?.geek || {}
+          const job = vue.job || vue.$props?.job || {}
+          return {
+            name: geek.name || geek.geekName || '',
+            encryptGeekId: geek.encryptGeekId || geek.encryptBossId || geek.securityId || '',
+            encryptJobId: geek.encryptJobId || job.encryptJobId || job.securityId || ''
+          }
+        }
+      }
 
-      return { name, encryptGeekId: '', encryptJobId: '' }
+      // 方法3：从 DOM 和 URL 获取
+      const nameEl = document.querySelector('.chat-conversation .user-name, .geek-name, .chat-header .name')
+      const name = nameEl?.textContent?.trim() || ''
+      const url = window.location.href
+      const geekIdMatch = url.match(/[?&](?:geekId|encryptGeekId)=([^&#]+)/)
+      const jobIdMatch = url.match(/[?&](?:jobId|encryptJobId)=([^&#]+)/)
+
+      return {
+        name,
+        encryptGeekId: geekIdMatch?.[1] || '',
+        encryptJobId: jobIdMatch?.[1] || ''
+      }
     })
 
     return info
