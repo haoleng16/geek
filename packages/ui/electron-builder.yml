@@ -9,8 +9,6 @@ files:
   - '!**/node_modules/electron/**/*'
   - '!**/node_modules/electron-builder/**/*'
   - '!**/node_modules/.pnpm/**/*'
-icon: resources/icon.png
-files:
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
@@ -22,6 +20,7 @@ files:
   - '!node_modules/date-fns/esm/*'
   - '!node_modules/highlight.js/{styles,scss}/*'
   - '!node_modules/typeorm/browser/*'
+icon: resources/icon.png
 asarUnpack:
   - 'resources/**'
   - '**/node_modules/better-sqlite3/**/*.node'
