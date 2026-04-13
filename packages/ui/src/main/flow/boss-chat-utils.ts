@@ -90,8 +90,10 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
     await chatInputHandle.click()
     await sleep(200)
 
-    console.log('[sendMessage] 尝试使用 execCommand 设置输入框内容...')
+    console.log('[sendMessage] 尝试设置输入框内容...')
     let setInputSuccess = false
+
+    // 方法1：使用原生 setter + InputEvent（对 Vue/React 框架兼容性最好）
     try {
       setInputSuccess = await page.evaluate((selector, content) => {
         const input = document.querySelector(selector) as HTMLElement | null
@@ -100,10 +102,25 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
         input.focus()
 
         if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-          input.select()
-          document.execCommand('delete', false)
-          document.execCommand('insertText', false, content)
-          input.dispatchEvent(new Event('input', { bubbles: true }))
+          // 使用原生 value setter 绕过框架拦截
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            HTMLTextAreaElement.prototype, 'value'
+          )?.set || Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype, 'value'
+          )?.set
+
+          if (nativeSetter) {
+            nativeSetter.call(input, content)
+          } else {
+            input.value = content
+          }
+
+          input.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: content
+          }))
           input.dispatchEvent(new Event('change', { bubbles: true }))
           return input.value === content
         }
@@ -122,11 +139,43 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
 
         return false
       }, foundSelector, text)
-      console.log('[sendMessage] execCommand 设置结果:', setInputSuccess)
+      console.log('[sendMessage] 原生 setter 设置结果:', setInputSuccess)
     } catch (error) {
-      console.error('[sendMessage] execCommand 设置失败:', error)
+      console.error('[sendMessage] 原生 setter 设置失败:', error)
     }
 
+    // 方法2：execCommand 回退（部分场景更可靠）
+    if (!setInputSuccess) {
+      try {
+        setInputSuccess = await page.evaluate((selector, content) => {
+          const input = document.querySelector(selector) as HTMLElement | null
+          if (!input) return false
+
+          input.focus()
+
+          if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+            input.select()
+            document.execCommand('delete', false)
+            document.execCommand('insertText', false, content)
+            input.dispatchEvent(new InputEvent('input', {
+              bubbles: true,
+              cancelable: true,
+              inputType: 'insertText',
+              data: content
+            }))
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+            return input.value === content
+          }
+
+          return false
+        }, foundSelector, text)
+        console.log('[sendMessage] execCommand 设置结果:', setInputSuccess)
+      } catch (error) {
+        console.error('[sendMessage] execCommand 设置失败:', error)
+      }
+    }
+
+    // 方法3：type 键盘模拟（最可靠但最慢）
     if (!setInputSuccess) {
       console.log('[sendMessage] 回退到 type 方法输入...')
       await page.evaluate((selector) => {
@@ -152,6 +201,9 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
       })
     }
 
+    // 等待框架处理输入事件
+    await sleep(300)
+
     const inputValue = await page.evaluate((selector) => {
       const input = document.querySelector(selector) as HTMLElement | null
       if (!input) return ''
@@ -173,7 +225,7 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
 
     console.log('[sendMessage] 尝试按 Enter 发送...')
     await chatInputHandle.press('Enter')
-    await sleep(600)
+    await sleep(800)
 
     const afterEnterValue = await page.evaluate((selector) => {
       const input = document.querySelector(selector) as HTMLElement | null
@@ -188,8 +240,50 @@ export async function sendMessage(page: Page, text: string): Promise<boolean> {
     console.log('[sendMessage] Enter 后输入框长度:', afterEnterValue.length)
 
     if (!afterEnterValue.trim()) {
-      console.log('[sendMessage] Enter 发送成功')
-      return true
+      // 输入框为空，但不一定是发送成功——可能是值从未被框架接受
+      // 通过检查是否有新消息出现来验证
+      const messageAppeared = await page.evaluate((expectedText) => {
+        // 检查聊天区域最后一条消息是否包含我们发送的内容
+        const messages = document.querySelectorAll('.chat-conversation [class*="message"], .chat-conversation [class*="msg"]')
+        if (messages.length === 0) return false
+        const lastMsg = messages[messages.length - 1] as HTMLElement
+        const text = lastMsg.innerText || lastMsg.textContent || ''
+        return text.includes(expectedText.substring(0, 20))
+      }, text.substring(0, 50))
+      console.log('[sendMessage] Enter 后新消息出现:', messageAppeared)
+
+      if (messageAppeared) {
+        console.log('[sendMessage] Enter 发送成功（已验证消息出现）')
+        return true
+      }
+
+      // 输入框为空但消息也没出现——可能是 execCommand 方式不生效，尝试 type 重试
+      console.log('[sendMessage] 输入框为空但消息未出现，尝试 type 方法重试...')
+      try {
+        await chatInputHandle.click()
+        await sleep(200)
+        await chatInputHandle.type(text, { delay: 30 + Math.random() * 20 })
+        await sleep(500)
+        await chatInputHandle.press('Enter')
+        await sleep(800)
+
+        const retryValue = await page.evaluate((selector) => {
+          const input = document.querySelector(selector) as HTMLElement | null
+          if (!input) return ''
+          if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+            return input.value || ''
+          }
+          return input.innerText || input.textContent || ''
+        }, foundSelector)
+        console.log('[sendMessage] type 重试后输入框长度:', retryValue.length)
+
+        if (!retryValue.trim()) {
+          console.log('[sendMessage] type 重试发送成功')
+          return true
+        }
+      } catch (retryErr) {
+        console.error('[sendMessage] type 重试失败:', retryErr)
+      }
     }
 
     const sendButtonSelectors = [

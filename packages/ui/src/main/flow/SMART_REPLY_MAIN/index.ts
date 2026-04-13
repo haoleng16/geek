@@ -1107,6 +1107,27 @@ const mainLoop = async () => {
 
       // 发送
       console.log('[SmartReply MainLoop] 用户确认发送回复')
+
+      // 弹窗关闭后需要重新聚焦浏览器页面，确保输入框状态正确
+      try {
+        await pageMapByName.boss!.bringToFront()
+        await sleep(300)
+        // 点击聊天输入框确保获得焦点
+        const inputFocused = await pageMapByName.boss!.evaluate(() => {
+          const input = document.querySelector('.boss-chat-editor-input') as HTMLElement
+          if (input) {
+            input.focus()
+            input.click()
+            return true
+          }
+          return false
+        })
+        console.log('[SmartReply MainLoop] 重新聚焦输入框:', inputFocused)
+        await sleep(300)
+      } catch (focusErr) {
+        console.error('[SmartReply MainLoop] 重新聚焦失败:', focusErr)
+      }
+
       sendSuccess = await sendMessage(pageMapByName.boss!, llmResult.reply)
     }
 
