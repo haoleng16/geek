@@ -68,6 +68,50 @@ let dataSource: DataSource | null = null
 // 初始化数据库
 const dbInitPromise = initDb(getPublicDbFilePath())
 
+function isBrowserSessionAlive() {
+  return !!browser?.isConnected() && !!pageMapByName.boss && !pageMapByName.boss.isClosed()
+}
+
+function ensureBrowserSessionAlive() {
+  if (!isBrowserSessionAlive()) {
+    throw new Error('BROWSER_SESSION_CLOSED')
+  }
+}
+
+function isBrowserSessionClosedError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return [
+    'BROWSER_SESSION_CLOSED',
+    'Target closed',
+    'Session closed',
+    'Connection closed',
+    'Most likely the page has been closed',
+    'Protocol error'
+  ].some((keyword) => message.includes(keyword))
+}
+
+async function persistInterviewBrowserSession(page: Page) {
+  try {
+    await storeStorage(page)
+    console.log('[Interview MainLoop] 已保存最新浏览器登录态')
+  } catch (error) {
+    console.warn('[Interview MainLoop] 保存浏览器登录态失败:', error)
+  }
+}
+
+async function sleepWhileWatchingBrowser(ms: number) {
+  let remaining = Math.max(0, Number(ms) || 0)
+
+  while (remaining > 0) {
+    ensureBrowserSessionAlive()
+    const currentWait = Math.min(remaining, 500)
+    await sleep(currentWait)
+    remaining -= currentWait
+  }
+
+  ensureBrowserSessionAlive()
+}
+
 // 获取面试配置
 function getInterviewConfig() {
   const raw = readConfigFile('boss.json')?.interview ?? {}
@@ -191,6 +235,8 @@ const mainLoop = async () => {
     }
   })
 
+  await persistInterviewBrowserSession(pageMapByName.boss!)
+
   // 点击聊天菜单
   console.log('[Interview MainLoop] 尝试点击聊天菜单...')
   try {
@@ -216,10 +262,12 @@ const mainLoop = async () => {
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
+      ensureBrowserSessionAlive()
+
       // 检查工作时间
       if (!isWithinWorkHours(riskConfig)) {
         console.log('[Interview MainLoop] 不在工作时间，等待...')
-        await sleep(60000)
+        await sleepWhileWatchingBrowser(60000)
         continue
       }
 
@@ -304,13 +352,15 @@ const mainLoop = async () => {
             '[Interview MainLoop] 滚动后仍未发现未读消息，当前会话兜底检查结果:',
             handledCurrentChat ? '已处理' : '无新回复'
           )
-          await sleep(cfg.scanIntervalSeconds * 1000)
+          await sleepWhileWatchingBrowser(cfg.scanIntervalSeconds * 1000)
           continue
         }
       }
 
       // 【修改】只处理有红色角标的聊天项
       for (const targetChat of unreadItems) {
+        ensureBrowserSessionAlive()
+
         // 检查最后一条是否是自己发的
         if (targetChat.lastIsSelf) {
           continue
@@ -320,7 +370,7 @@ const mainLoop = async () => {
 
         // 【修改】通过聊天项的标识点击
         await clickChatItemByIdentifier(pageMapByName.boss!, targetChat)
-        await sleep(2000)
+        await sleepWhileWatchingBrowser(2000)
 
         // 获取候选人信息
         const geekInfo = await getCurrentChatGeekInfo(pageMapByName.boss!)
@@ -401,10 +451,11 @@ const mainLoop = async () => {
 
         // 风控延迟
         await randomDelay()
+        ensureBrowserSessionAlive()
       }
 
       console.log('[Interview MainLoop] 当前未读消息处理完成，等待下一轮扫描...')
-      await sleep(cfg.scanIntervalSeconds * 1000)
+      await sleepWhileWatchingBrowser(cfg.scanIntervalSeconds * 1000)
 
     } catch (error) {
       console.error('[Interview MainLoop] 处理出错:', error)
@@ -412,6 +463,10 @@ const mainLoop = async () => {
         action: 'main_loop_error',
         errorMessage: String(error)
       })
+      if (isBrowserSessionClosedError(error) || !isBrowserSessionAlive()) {
+        console.log('[Interview MainLoop] 检测到浏览器已关闭，准备重新启动浏览器会话')
+        throw new Error('BROWSER_SESSION_CLOSED')
+      }
       await sleep(5000)
     }
   }

@@ -51,6 +51,11 @@ export async function bootstrap() {
     devtools: process.env.NODE_ENV === 'development'
   })
 
+  browser.once('disconnected', () => {
+    console.log('[Interview Bootstrap] 浏览器连接已断开')
+    pageMapByName['boss'] = null
+  })
+
   console.log('[Interview Bootstrap] 浏览器已启动')
   return browser
 }
@@ -91,9 +96,8 @@ export async function launchBoss(browser: Browser, skipCookies = false) {
   }
   pageMapByName['boss'] = page
   page.once('close', () => {
+    console.log('[Interview LaunchBoss] 页面已关闭')
     pageMapByName['boss'] = null
-    const cp = browser.process()
-    cp?.kill()
   })
   return page
 }
