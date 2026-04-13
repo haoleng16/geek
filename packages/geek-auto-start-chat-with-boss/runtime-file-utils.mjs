@@ -26,7 +26,23 @@ export const configFolderPath = path.join(
   runtimeFolderPath,
   'config'
 )
+const ensureRuntimeFolderPathExist = () => {
+  if (!fs.existsSync(runtimeFolderPath)) {
+    fs.mkdirSync(runtimeFolderPath, { recursive: true })
+  }
+  ;['config', 'storage'].forEach(dirPath => {
+    if (!fs.existsSync(
+      path.join(runtimeFolderPath, dirPath)
+    )) {
+      fs.mkdirSync(
+        path.join(runtimeFolderPath, dirPath),
+        { recursive: true }
+      )
+    }
+  })
+}
 export const writeConfigFile = async (fileName, content, { isSync } = {}) => {
+  ensureRuntimeFolderPathExist()
   const filePath = path.join(configFolderPath, fileName)
   const fileContent = JSON.stringify(content)
   if (isSync) {
@@ -42,6 +58,7 @@ export const writeConfigFile = async (fileName, content, { isSync } = {}) => {
     )
   }
 }
+ensureRuntimeFolderPathExist()
 if (
   !fs.existsSync(
     path.join(configFolderPath, 'common-job-condition-config.json')
@@ -117,21 +134,6 @@ if (
     }
     writeConfigFile('boss.json', bossConfig, { isSync: true })
   }
-}
-
-const ensureRuntimeFolderPathExist = () => {
-  if (!fs.existsSync(runtimeFolderPath)) {
-    fs.mkdirSync(runtimeFolderPath)
-  }
-  ;['config', 'storage'].forEach(dirPath => {
-    if (!fs.existsSync(
-      path.join(runtimeFolderPath, dirPath)
-    )) {
-      fs.mkdirSync(
-        path.join(runtimeFolderPath, dirPath)
-      )
-    }
-  })
 }
 export const ensureConfigFileExist = () => {
   ensureRuntimeFolderPathExist()
@@ -237,6 +239,7 @@ export const readStorageFile = (fileName, { isJson } = {}) => {
 
 export const writeStorageFile = async (fileName, content, { isJson } = {}) => {
   isJson = isJson ?? true
+  ensureRuntimeFolderPathExist()
   const filePath = path.join(storageFilePath, fileName)
   let fileContent
   if (isJson) {
