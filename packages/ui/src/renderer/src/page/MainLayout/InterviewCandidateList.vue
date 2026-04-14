@@ -5,7 +5,6 @@
       <el-form :inline="true" :model="filterForm">
         <el-form-item label="状态">
           <el-select v-model="filterForm.status" placeholder="全部状态" clearable @change="handleFilterChange">
-            <el-option label="新候选人" value="new" />
             <el-option label="等待回复" value="waiting_round_1" />
             <el-option label="等待第2轮回复" value="waiting_round_2" />
             <el-option label="回复提取失败" value="reply_extraction_failed" />
@@ -301,7 +300,7 @@ async function handleExportExcel() {
 
 function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
-    new: '新候选人',
+    new: '待发送首轮',
     waiting_round_1: '等待第1轮',
     waiting_round_2: '等待第2轮',
     waiting_round_n: '等待回复中',
@@ -318,7 +317,7 @@ function getStatusLabel(status: string): string {
 
 function getStatusTagType(status: string): string {
   const types: Record<string, string> = {
-    new: 'info',
+    new: 'warning',
     waiting_round_1: 'warning',
     waiting_round_2: 'warning',
     waiting_round_n: 'warning',

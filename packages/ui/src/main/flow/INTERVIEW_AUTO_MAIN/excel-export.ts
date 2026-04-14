@@ -9,7 +9,7 @@ import { getInterviewCandidateList } from '@geekgeekrun/sqlite-plugin/handlers'
 
 // 状态映射
 const STATUS_LABELS: Record<string, string> = {
-  new: '新候选人',
+  new: '待发送首轮',
   waiting_round_1: '等待第1轮',
   waiting_round_2: '等待第2轮',
   waiting_round_n: '等待回复中',

@@ -396,28 +396,30 @@ const mainLoop = async () => {
         const educationInfo = await getGeekEducationInfo(pageMapByName.boss!)
         const experienceInfo = await getGeekExperienceInfo(pageMapByName.boss!)
 
-        // 【新增】候选人筛选检查
-        const filterResult = checkCandidateFilter(jobPosition, educationInfo, experienceInfo)
-        if (!filterResult.passed) {
-          console.log('[Interview MainLoop] 候选人不符合筛选条件:', filterResult.reason)
-          // 记录筛选日志
-          await saveInterviewOperationLog(dataSource!, {
-            action: 'candidate_filtered',
-            detail: JSON.stringify({
-              geekName,
-              jobName: targetChat.jobName,
-              education: educationInfo?.education,
-              experience: experienceInfo?.experience,
-              filterReason: filterResult.reason
-            })
-          })
-          continue // 跳过该候选人
-        }
-
         // 获取或创建候选人记录
         let candidate = await getInterviewCandidate(dataSource!, encryptGeekId, encryptJobId)
 
         if (!candidate) {
+          const filterResult = checkCandidateFilter(jobPosition, educationInfo, experienceInfo)
+          if (!filterResult.passed) {
+            console.log('[Interview MainLoop] 候选人不符合筛选条件，标记为已拒绝:', filterResult.reason)
+            await saveFilteredOutCandidate(
+              dataSource!,
+              {
+                encryptGeekId,
+                geekName,
+                encryptJobId,
+                jobName: targetChat.jobName,
+                jobPositionId: jobPosition.id,
+                education: educationInfo?.education || undefined,
+                school: educationInfo?.school || undefined,
+                major: educationInfo?.major || undefined
+              },
+              filterResult.reason
+            )
+            continue
+          }
+
           candidate = await saveInterviewCandidate(dataSource!, {
             encryptGeekId,
             geekName,
@@ -431,7 +433,8 @@ const mainLoop = async () => {
             school: educationInfo?.school || undefined,
             major: educationInfo?.major || undefined
           })
-          console.log('[Interview MainLoop] 创建候选人记录:', candidate.id)
+          console.log('[Interview MainLoop] 创建候选人记录并直接发送首轮问题:', candidate.id)
+          await sendFirstRoundQuestion(dataSource!, pageMapByName.boss!, candidate, jobPosition)
         } else if (educationInfo?.education && !candidate.education) {
           // 如果候选人已存在但没有教育信息，更新教育信息
           await saveInterviewCandidate(dataSource!, {
@@ -446,8 +449,10 @@ const mainLoop = async () => {
           console.log('[Interview MainLoop] 更新候选人教育信息:', educationInfo)
         }
 
-        // 根据状态处理
-        await handleCandidateByStatus(dataSource!, pageMapByName.boss!, candidate, jobPosition, cfg)
+        if (candidate.status !== InterviewCandidateStatus.NEW) {
+          // 根据状态处理
+          await handleCandidateByStatus(dataSource!, pageMapByName.boss!, candidate, jobPosition, cfg)
+        }
 
         // 风控延迟
         await randomDelay()
@@ -617,6 +622,41 @@ async function processFallbackCandidate(
     console.error('[Interview MainLoop] 兜底处理候选人失败:', error)
     return false
   }
+}
+
+async function saveFilteredOutCandidate(
+  ds: DataSource,
+  candidateData: {
+    encryptGeekId: string
+    geekName: string
+    encryptJobId: string
+    jobName: string
+    jobPositionId: number
+    education?: string
+    school?: string
+    major?: string
+  },
+  filterReason: string
+) {
+  const candidate = await saveInterviewCandidate(ds, {
+    ...candidateData,
+    status: InterviewCandidateStatus.REJECTED,
+    llmReason: filterReason,
+    firstContactAt: new Date()
+  })
+
+  await saveInterviewOperationLog(ds, {
+    candidateId: candidate.id,
+    action: 'candidate_filtered',
+    detail: JSON.stringify({
+      geekName: candidateData.geekName,
+      jobName: candidateData.jobName,
+      education: candidateData.education,
+      filterReason
+    })
+  })
+
+  return candidate
 }
 
 /**

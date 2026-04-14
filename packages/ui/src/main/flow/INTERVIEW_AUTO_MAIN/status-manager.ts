@@ -210,7 +210,7 @@ export async function transitionToError(
  */
 export function getStatusDisplayText(status: string): string {
   const statusMap: Record<string, string> = {
-    [InterviewCandidateStatus.NEW]: '新候选人',
+    [InterviewCandidateStatus.NEW]: '待发送首轮',
     [InterviewCandidateStatus.WAITING_ROUND_1]: '等待第1轮回复',
     [InterviewCandidateStatus.WAITING_ROUND_2]: '等待第2轮回复',
     [InterviewCandidateStatus.WAITING_ROUND_N]: '等待回复中',
