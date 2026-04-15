@@ -590,11 +590,18 @@ const mainLoop = async () => {
               card.frameIndex,
               card.encryptUserId
             )
+            console.log('[DIAG MainLoop] openCandidateResume:', resumePanel ? '非null' : 'null', 'name:', card.name, 'frameIndex:', card.frameIndex)
             const [domResume, apiResume, resumeInfo] = await Promise.all([
               extractResumeDomText(pageMapByName.boss!, card.frameIndex).catch(() => null),
               apiResumePromise,
               getCandidateResumeFromDOM(pageMapByName.boss!).catch(() => ({}))
             ])
+            console.log('[DIAG MainLoop] 数据源结果:', JSON.stringify({
+              domResume: domResume ? { plainTextLen: domResume.plainText.length, sections: domResume.sections.length } : null,
+              apiResume: apiResume ? '有数据' : 'null',
+              resumeInfoKeys: resumeInfo ? Object.keys(resumeInfo).filter(k => resumeInfo[k]).join(',') : 'empty',
+              resumePanel: resumePanel ? '非null' : 'null'
+            }))
 
             const structuredResume = apiResume || resumeInfo
             const structuredSections = buildResumeAnalysisSections(structuredResume)
@@ -628,6 +635,7 @@ const mainLoop = async () => {
                 resumeInfo?.advantage ||
                 (Array.isArray(resumeInfo?.skills) && resumeInfo.skills.length > 0)
             )
+            console.log('[DIAG MainLoop] hasResumeContent:', hasResumeContent, 'textLen:', finalResumeText.length, 'panel:', resumePanel ? '非null' : 'null')
 
             if (!hasResumeContent) {
               candidate.recommend = false

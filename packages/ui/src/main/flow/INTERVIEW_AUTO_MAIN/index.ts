@@ -12,7 +12,11 @@ import { initInterviewIpcHandlers } from './ipc-handlers'
 import { checkShouldExit } from '../../utils/worker'
 import { getLastUsedAndAvailableBrowser } from '../DOWNLOAD_DEPENDENCIES/utils/browser-history'
 import { configWithBrowserAssistant } from '../../features/config-with-browser-assistant'
-import { writeStorageFile, readStorageFile, readConfigFile } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
+import {
+  writeStorageFile,
+  readStorageFile,
+  readConfigFile
+} from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
 import { AUTO_CHAT_ERROR_EXIT_CODE } from '../../../common/enums/auto-start-chat'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
 import { getPublicDbFilePath } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
@@ -23,12 +27,20 @@ import { checkCookieListFormat } from '../../../common/utils/cookie'
 import { loginWithCookieAssistant } from '../../features/login-with-cookie-assistant'
 import type { Browser, Page } from 'puppeteer'
 import type { ChatListItem } from '../boss-chat-utils'
-import { getCurrentChatGeekInfo, getGeekEducationInfo, getGeekExperienceInfo } from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
+import {
+  getCurrentChatGeekInfo,
+  getGeekEducationInfo,
+  getGeekExperienceInfo
+} from '../RECRUITER_AUTO_REPLY_MAIN/quick-reply'
 import { sendMessage } from '../boss-chat-utils'
 
 // 导入面试模块
 import { matchJobPositionByName } from './job-matcher'
-import { sendInterviewQuestion, sendResumeRequest, sendResumeExchangeRequest } from './question-sender'
+import {
+  sendInterviewQuestion,
+  sendResumeRequest,
+  sendResumeExchangeRequest
+} from './question-sender'
 import {
   getLatestCandidateAnswer,
   mergeMessagesInWindow,
@@ -37,10 +49,15 @@ import {
   isLatestMessageFromCandidate
 } from './answer-collector'
 import { scoreAnswer } from './scorer'
-import { detectResumeSent, detectResumeCard, clickResumeAcceptButton, downloadResumeFromCard } from './resume-handler'
-import { sendResumeEmail } from './email-sender'
+import { detectResumeCard, clickResumeAcceptButton } from './resume-handler'
 import { shouldSendNextRound } from './status-manager'
-import { randomDelay, canSendMessage, recordMessageSent, getRiskControlConfig, isWithinWorkHours } from './risk-control'
+import {
+  randomDelay,
+  canSendMessage,
+  recordMessageSent,
+  getRiskControlConfig,
+  isWithinWorkHours
+} from './risk-control'
 import {
   saveInterviewCandidate,
   getInterviewCandidate,
@@ -288,7 +305,7 @@ const mainLoop = async () => {
       console.log('[Interview MainLoop] 聊天列表数量:', friendListData?.length)
 
       // 【修改】筛选出有红色角标（未读消息）的聊天项
-      let unreadItems = friendListData?.filter(item => Number(item.unreadCount) > 0) || []
+      let unreadItems = friendListData?.filter((item) => Number(item.unreadCount) > 0) || []
       console.log('[Interview MainLoop] 当前未读消息数量:', unreadItems.length)
 
       // 【修改】如果当前没有未读消息，滚动到底部寻找更多
@@ -302,9 +319,10 @@ const mainLoop = async () => {
         while (scrollAttempts < maxScrollAttempts) {
           // 滚动到底部（向下滚动）
           await pageMapByName.boss!.evaluate(() => {
-            const chatList = document.querySelector('.chat-list') ||
-                            document.querySelector('[class*="chat-list"]') ||
-                            document.querySelector('[role="list"]')
+            const chatList =
+              document.querySelector('.chat-list') ||
+              document.querySelector('[class*="chat-list"]') ||
+              document.querySelector('[role="list"]')
             if (chatList) {
               // 向下滚动到底部
               chatList.scrollTop = chatList.scrollHeight
@@ -318,7 +336,9 @@ const mainLoop = async () => {
 
           // 检查是否有新的聊天项出现
           const newItemCount = newListData?.length || 0
-          console.log(`[Interview MainLoop] 滚动后列表数量: ${newItemCount}, 之前: ${lastItemCount}`)
+          console.log(
+            `[Interview MainLoop] 滚动后列表数量: ${newItemCount}, 之前: ${lastItemCount}`
+          )
 
           // 如果滚动后没有新项出现，停止寻找
           if (newItemCount <= lastItemCount) {
@@ -328,7 +348,7 @@ const mainLoop = async () => {
 
           // 更新列表并检查是否有未读消息
           friendListData = newListData
-          unreadItems = newListData?.filter(item => Number(item.unreadCount) > 0) || []
+          unreadItems = newListData?.filter((item) => Number(item.unreadCount) > 0) || []
 
           // 如果找到未读消息，停止滚动
           if (unreadItems.length > 0) {
@@ -402,7 +422,10 @@ const mainLoop = async () => {
         if (!candidate) {
           const filterResult = checkCandidateFilter(jobPosition, educationInfo, experienceInfo)
           if (!filterResult.passed) {
-            console.log('[Interview MainLoop] 候选人不符合筛选条件，标记为已拒绝:', filterResult.reason)
+            console.log(
+              '[Interview MainLoop] 候选人不符合筛选条件，标记为已拒绝:',
+              filterResult.reason
+            )
             await saveFilteredOutCandidate(
               dataSource!,
               {
@@ -451,7 +474,13 @@ const mainLoop = async () => {
 
         if (candidate.status !== InterviewCandidateStatus.NEW) {
           // 根据状态处理
-          await handleCandidateByStatus(dataSource!, pageMapByName.boss!, candidate, jobPosition, cfg)
+          await handleCandidateByStatus(
+            dataSource!,
+            pageMapByName.boss!,
+            candidate,
+            jobPosition,
+            cfg
+          )
         }
 
         // 风控延迟
@@ -461,7 +490,6 @@ const mainLoop = async () => {
 
       console.log('[Interview MainLoop] 当前未读消息处理完成，等待下一轮扫描...')
       await sleepWhileWatchingBrowser(cfg.scanIntervalSeconds * 1000)
-
     } catch (error) {
       console.error('[Interview MainLoop] 处理出错:', error)
       await saveInterviewOperationLog(dataSource!, {
@@ -497,43 +525,6 @@ async function processCurrentOpenChatWhenNoUnread(
     if (candidate) {
       const handledCurrent = await processFallbackCandidate(ds, page, candidate, config)
       if (handledCurrent) {
-        return true
-      }
-    }
-
-    const friendListData = await getChatList(page)
-    for (const pendingCandidate of pendingCandidates) {
-      if (
-        candidate?.id &&
-        pendingCandidate.id === candidate.id
-      ) {
-        continue
-      }
-
-      const matchedChat = friendListData.find((item) => {
-        if (pendingCandidate.encryptGeekId && item.encryptGeekId) {
-          return item.encryptGeekId === pendingCandidate.encryptGeekId
-        }
-        return !!pendingCandidate.geekName && pendingCandidate.geekName === item.name
-      })
-
-      if (!matchedChat) {
-        continue
-      }
-
-      await clickChatItemByIdentifier(page, {
-        name: matchedChat.name || pendingCandidate.geekName,
-        encryptGeekId: matchedChat.encryptGeekId || pendingCandidate.encryptGeekId
-      })
-      await sleep(1500)
-
-      const handledVisiblePending = await processFallbackCandidate(
-        ds,
-        page,
-        pendingCandidate,
-        config
-      )
-      if (handledVisiblePending) {
         return true
       }
     }
@@ -615,7 +606,11 @@ async function processFallbackCandidate(
       return false
     }
 
-    console.log('[Interview MainLoop] 未读为空，兜底处理候选人:', candidate.geekName, candidate.status)
+    console.log(
+      '[Interview MainLoop] 未读为空，兜底处理候选人:',
+      candidate.geekName,
+      candidate.status
+    )
     await handleCandidateByStatus(ds, page, candidate, jobPosition, config)
     return true
   } catch (error) {
@@ -664,7 +659,6 @@ async function saveFilteredOutCandidate(
  * 新逻辑：
  * 1. 使用问题轮次的 keywords 和 llmPrompt 配置
  * 2. 30秒时间窗口合并消息
- * 3. 固定权重评分（关键词 0.7 + LLM 0.3）
  */
 async function handleCandidateByStatus(
   ds: DataSource,
@@ -692,7 +686,9 @@ async function handleCandidateByStatus(
         const now = Date.now()
         const thirtySecondsAgo = now - 30 * 1000
         if (lastScoredTime >= thirtySecondsAgo) {
-          console.log(`[Interview MainLoop] 候选人刚在 ${Math.round((now - lastScoredTime) / 1000)} 秒前被评分过，跳过`)
+          console.log(
+            `[Interview MainLoop] 候选人刚在 ${Math.round((now - lastScoredTime) / 1000)} 秒前被评分过，跳过`
+          )
           break
         }
       }
@@ -705,19 +701,42 @@ async function handleCandidateByStatus(
 
       // 如果记录已存在且已评分（scoredAt不为空），跳过本轮评分
       if (existingQARecord && existingQARecord.scoredAt) {
-        console.log(`[Interview MainLoop] 第${candidate.currentRound}轮已评分（scoredAt: ${existingQARecord.scoredAt}），跳过重复评分`)
+        console.log(
+          `[Interview MainLoop] 第${candidate.currentRound}轮已评分（scoredAt: ${existingQARecord.scoredAt}），跳过重复评分`
+        )
+        break
+      }
+
+      // 获取问题轮次配置
+      const questionRound = jobPosition.questionRounds?.find(
+        (r: any) => r.roundNumber === candidate.currentRound
+      )
+      if (!questionRound) {
+        console.log('[Interview MainLoop] 未找到当前轮次配置')
         break
       }
 
       // 合并30秒窗口内的消息
-      let { mergedText } = await mergeMessagesInWindow(page, candidate, 30)
+      let { mergedText } = await mergeMessagesInWindow(
+        page,
+        candidate,
+        questionRound.questionText,
+        30
+      )
       if (!mergedText) {
         console.log('[Interview MainLoop] 30秒窗口未提取到有效回复，尝试回退到最新一条候选人消息')
 
-        const latestAnswer = await getLatestCandidateAnswer(page, candidate)
+        const latestAnswer = await getLatestCandidateAnswer(
+          page,
+          candidate,
+          questionRound.questionText
+        )
         if (latestAnswer?.text) {
           mergedText = latestAnswer.text
-          console.log('[Interview MainLoop] 已使用最新一条候选人消息作为评分输入:', mergedText.substring(0, 100))
+          console.log(
+            '[Interview MainLoop] 已使用最新一条候选人消息作为评分输入:',
+            mergedText.substring(0, 100)
+          )
         }
       }
 
@@ -753,13 +772,6 @@ async function handleCandidateByStatus(
         break
       }
 
-      // 获取问题轮次配置
-      const questionRound = jobPosition.questionRounds?.find((r: any) => r.roundNumber === candidate.currentRound)
-      if (!questionRound) {
-        console.log('[Interview MainLoop] 未找到当前轮次配置')
-        break
-      }
-
       // 评分（使用纯LLM评分）
       const scoreResult = await scoreAnswer(
         ds,
@@ -784,18 +796,20 @@ async function handleCandidateByStatus(
         })
       } else {
         // 记录不存在，创建新记录（使用 upsert 确保唯一性）
-        await qaRepo.save(qaRepo.create({
-          candidateId: candidate.id,
-          roundNumber: candidate.currentRound,
-          questionText: questionRound.questionText,
-          answerText: mergedText,
-          answeredAt: new Date(),
-          questionSentAt: candidate.lastQuestionAt,
-          llmScore: scoreResult.llmScore,
-          totalScore: scoreResult.totalScore,
-          llmReason: scoreResult.llmReason,
-          scoredAt: new Date()
-        }))
+        await qaRepo.save(
+          qaRepo.create({
+            candidateId: candidate.id,
+            roundNumber: candidate.currentRound,
+            questionText: questionRound.questionText,
+            answerText: mergedText,
+            answeredAt: new Date(),
+            questionSentAt: candidate.lastQuestionAt,
+            llmScore: scoreResult.llmScore,
+            totalScore: scoreResult.totalScore,
+            llmReason: scoreResult.llmReason,
+            scoredAt: new Date()
+          })
+        )
       }
 
       // 更新候选人得分和已评分时间（关键：避免重复评分同一条消息）
@@ -804,10 +818,12 @@ async function handleCandidateByStatus(
         totalScore: scoreResult.totalScore,
         llmReason: scoreResult.llmReason,
         lastReplyAt: new Date(),
-        lastScoredAt: new Date()  // 记录已评分时间，避免重复评分
+        lastScoredAt: new Date() // 记录已评分时间，避免重复评分
       })
 
-      console.log(`[Interview MainLoop] 评分结果: ${scoreResult.totalScore}分, 通过: ${scoreResult.passed}`)
+      console.log(
+        `[Interview MainLoop] 评分结果: ${scoreResult.totalScore}分, 通过: ${scoreResult.passed}`
+      )
 
       if (scoreResult.passed) {
         // 检查是否有下一轮
@@ -822,7 +838,9 @@ async function handleCandidateByStatus(
           if (!resumeExchangeSuccess) {
             // 如果点击按钮失败，回退到发送文本消息方式
             console.log('[Interview MainLoop] 点击"求简历"按钮失败，回退到发送文本消息')
-            const inviteText = jobPosition.resumeInviteText || '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
+            const inviteText =
+              jobPosition.resumeInviteText ||
+              '您好！感谢您的回复。我们对您的背景很感兴趣，能否发送一份您的简历？'
             await sendResumeRequest(ds, page, candidate, inviteText)
           }
         }
@@ -844,30 +862,19 @@ async function handleCandidateByStatus(
         const acceptResult = await clickResumeAcceptButton(page)
 
         if (acceptResult.success) {
-          console.log('[Interview MainLoop] 已点击同意按钮，等待简历卡片出现...')
-          // 等待1秒让简历卡片出现在聊天界面
+          console.log('[Interview MainLoop] 已点击同意按钮')
           await sleep(1000)
 
           // 更新状态为 RESUME_AGREED
-          await updateInterviewCandidateStatus(ds, candidate.id!, InterviewCandidateStatus.RESUME_AGREED, {
-            lastReplyAt: new Date()
-          })
-          console.log('[Interview MainLoop] 状态更新为 RESUME_AGREED')
-
-          // 继续处理：尝试下载简历
-          console.log('[Interview MainLoop] 检查简历是否可下载...')
-          const resumeDetection = await detectResumeSent(page)
-          if (resumeDetection.hasResume) {
-            console.log('[Interview MainLoop] 简历卡片已出现，开始下载...')
-            const resumePath = await downloadResumeFromCard(ds, page, candidate)
-            if (resumePath) {
-              console.log('[Interview MainLoop] ★★★ 简历下载成功:', resumePath)
-              // 发送邮件
-              await sendResumeEmail(ds, candidate, resumePath)
-            } else {
-              console.log('[Interview MainLoop] 简历下载失败，将在下一轮继续尝试')
+          await updateInterviewCandidateStatus(
+            ds,
+            candidate.id!,
+            InterviewCandidateStatus.RESUME_AGREED,
+            {
+              lastReplyAt: new Date()
             }
-          }
+          )
+          console.log('[Interview MainLoop] 状态更新为 RESUME_AGREED')
         } else {
           console.log('[Interview MainLoop] 点击同意按钮失败:', acceptResult.message)
         }
@@ -877,19 +884,7 @@ async function handleCandidateByStatus(
       break
 
     case InterviewCandidateStatus.RESUME_AGREED:
-      // 已点击同意，检查简历是否可下载
-      console.log('[Interview MainLoop] 检查简历下载状态...')
-      const resumeDownloadCheck = await detectResumeSent(page)
-      if (resumeDownloadCheck.hasResume) {
-        const resumePath = await downloadResumeFromCard(ds, page, candidate)
-        if (resumePath) {
-          console.log('[Interview MainLoop] ★★★ 简历下载成功:', resumePath)
-          // 发送邮件
-          await sendResumeEmail(ds, candidate, resumePath)
-        }
-      } else {
-        console.log('[Interview MainLoop] 简历尚未可下载，继续等待')
-      }
+      console.log('[Interview MainLoop] 简历已同意，流程结束')
       break
 
     default:
@@ -933,10 +928,10 @@ async function getChatList(page: Page): Promise<ChatListItem[]> {
     const friendListData = await page.evaluate(() => {
       const geekItems = document.querySelectorAll('[role="listitem"]')
 
-      return [...geekItems].map(el => {
+      return [...geekItems].map((el) => {
         const geekItem = el.querySelector('.geek-item') || el
         const textContent = geekItem?.innerText || el.innerText || ''
-        const textLines = textContent.split('\n').filter(line => line.trim())
+        const textLines = textContent.split('\n').filter((line) => line.trim())
 
         let name = ''
         let time = ''
@@ -966,7 +961,8 @@ async function getChatList(page: Page): Promise<ChatListItem[]> {
 
         const vue = geekItem.__vue__ || el.__vue__
         const props = vue?._props || vue?.$props || vue?.props || {}
-        const data = props.geek || props.item || props.message || props.user || props.data || props.row || {}
+        const data =
+          props.geek || props.item || props.message || props.user || props.data || props.row || {}
 
         return {
           name: name || data.name || data.geekName || '',
@@ -1050,9 +1046,10 @@ async function clickChatItemByIdentifier(page: Page, chatItem: any) {
         for (const el of items) {
           const geekItem = el.querySelector('.geek-item') || el
           // 检查是否有未读角标
-          const badge = geekItem.querySelector('[class*="unread"]') ||
-                        geekItem.querySelector('[class*="badge"]') ||
-                        geekItem.querySelector('[class*="dot"]')
+          const badge =
+            geekItem.querySelector('[class*="unread"]') ||
+            geekItem.querySelector('[class*="badge"]') ||
+            geekItem.querySelector('[class*="dot"]')
           if (badge) {
             ;(geekItem as HTMLElement).click()
             return
@@ -1146,9 +1143,10 @@ async function scrollToLoadAllUnread(page: Page): Promise<void> {
 
       // 滚动聊天列表
       await page.evaluate(() => {
-        const chatList = document.querySelector('.chat-list') ||
-                        document.querySelector('[class*="chat-list"]') ||
-                        document.querySelector('[role="list"]')
+        const chatList =
+          document.querySelector('.chat-list') ||
+          document.querySelector('[class*="chat-list"]') ||
+          document.querySelector('[role="list"]')
 
         if (chatList) {
           chatList.scrollTop = chatList.scrollHeight
@@ -1198,7 +1196,10 @@ export async function runEntry() {
 
   console.log('[Interview runEntry] 正在检查浏览器...')
   let puppeteerExecutable = await getLastUsedAndAvailableBrowser()
-  console.log('[Interview runEntry] 浏览器检查结果:', puppeteerExecutable ? puppeteerExecutable.executablePath : 'null')
+  console.log(
+    '[Interview runEntry] 浏览器检查结果:',
+    puppeteerExecutable ? puppeteerExecutable.executablePath : 'null'
+  )
 
   if (!puppeteerExecutable) {
     try {
@@ -1279,7 +1280,11 @@ export async function runEntry() {
 function checkCandidateFilter(
   jobPosition: any,
   educationInfo: { education: string; school: string; major: string } | null,
-  experienceInfo: { experience: string; isFreshGraduate: boolean; graduateYear: string | null } | null
+  experienceInfo: {
+    experience: string
+    isFreshGraduate: boolean
+    graduateYear: string | null
+  } | null
 ): { passed: boolean; reason: string } {
   // 解析筛选配置
   let educationFilter: string[] = []
@@ -1331,7 +1336,12 @@ function checkCandidateFilter(
       console.log('[Filter] 候选人无经验信息，跳过经验筛选')
     } else {
       // 经验匹配逻辑
-      const expPassed = matchExperience(candidateExp, isFreshGraduate, graduateYear, experienceFilter)
+      const expPassed = matchExperience(
+        candidateExp,
+        isFreshGraduate,
+        graduateYear,
+        experienceFilter
+      )
       if (!expPassed) {
         return {
           passed: false,
@@ -1402,14 +1412,11 @@ function matchExperience(
 
     if (filter === '1年及以下') {
       if (years <= 1) return true
-    }
-    else if (filter === '2年') {
+    } else if (filter === '2年') {
       if (years === 2) return true
-    }
-    else if (filter === '3年') {
+    } else if (filter === '3年') {
       if (years === 3) return true
-    }
-    else if (filter === '3年以上') {
+    } else if (filter === '3年以上') {
       if (years >= 3) return true
     }
   }

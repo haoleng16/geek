@@ -40,13 +40,17 @@ export function getTargetFrame(
     const frames = page.frames()
     if (frames[frameIndex]) return frames[frameIndex]
   }
-  // 降级：找包含推荐内容的 frame
+  // 降级：优先匹配 /frame/recommend（内容 iframe），避免误返回主页面壳
+  let fallback: Frame | null = null
   for (const frame of page.frames()) {
-    if (frame.url().includes('/frame/recommend') || frame.url().includes('/web/chat/recommend')) {
+    if (frame.url().includes('/frame/recommend')) {
       return frame
     }
+    if (frame.url().includes('/web/chat/recommend')) {
+      fallback = frame
+    }
   }
-  return page
+  return fallback || page
 }
 
 async function safe$(
@@ -120,7 +124,10 @@ async function findVisibleElement(
             )
           })
           if (visible) {
+            console.log('[DIAG findVisibleElement] 找到可见元素, selector:', selector)
             return element
+          } else {
+            console.log('[DIAG findVisibleElement] 元素存在但不可见, selector:', selector)
           }
         } catch {
           // ignore detached handle
@@ -155,23 +162,36 @@ async function findCard(
 ): Promise<ElementHandle<Element> | null> {
   const ctx = getTargetFrame(page, frameIndex)
   if (!ctx) {
+    console.warn('[DIAG findCard] getTargetFrame 返回 null, frameIndex:', frameIndex)
     return null
   }
+
+  const ctxUrl = 'url' in ctx ? (ctx as any).url() : 'page'
 
   // 优先 cardKey
   if (cardKey) {
     const el = await safe$(ctx, `[data-geekgeekrun-card-key="${cardKey}"]`)
-    if (el) return el
+    if (el) {
+      console.log('[DIAG findCard] 通过 cardKey 找到卡片, ctxUrl:', ctxUrl)
+      return el
+    }
   }
 
   // data-geek / data-geekid
   if (encryptUserId) {
     let el = await safe$(ctx, `[data-geek="${encryptUserId}"]`)
-    if (el) return el
+    if (el) {
+      console.log('[DIAG findCard] 通过 data-geek 找到卡片, uid:', encryptUserId, 'ctxUrl:', ctxUrl)
+      return el
+    }
     el = await safe$(ctx, `[data-geekid="${encryptUserId}"]`)
-    if (el) return el
+    if (el) {
+      console.log('[DIAG findCard] 通过 data-geekid 找到卡片, uid:', encryptUserId)
+      return el
+    }
   }
 
+  console.warn('[DIAG findCard] 未找到卡片, cardKey:', cardKey, 'uid:', encryptUserId, 'frameIndex:', frameIndex, 'ctxUrl:', ctxUrl)
   return null
 }
 
@@ -232,8 +252,10 @@ export async function openCandidateResume(
 
   // 等待 HTML 简历弹窗渲染完成
   const popupReadyTarget = await waitForResumePopupReady(page, frameIndex)
+  console.log('[DIAG openCandidateResume] popupReadyTarget:', popupReadyTarget ? '找到' : 'null', 'uid:', uid)
   if (popupReadyTarget) {
     const resumeRoot = await findResumeRoot(page, frameIndex)
+    console.log('[DIAG openCandidateResume] resumeRoot:', resumeRoot ? '找到' : 'null')
     if (resumeRoot) {
       await popupReadyTarget.dispose().catch(() => undefined)
       console.log('[RecommendTalent Resume] 简历正文已就绪')

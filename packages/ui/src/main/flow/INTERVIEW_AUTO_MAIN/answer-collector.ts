@@ -8,6 +8,7 @@ import type { Page } from 'puppeteer'
 import type { DataSource } from 'typeorm'
 import { saveInterviewQaRecord, getInterviewQaRecordList } from '@geekgeekrun/sqlite-plugin/handlers'
 import type { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/entity/InterviewCandidate'
+import { sleep } from '@geekgeekrun/utils/sleep.mjs'
 
 export interface CandidateAnswer {
   text: string
@@ -83,6 +84,222 @@ function shouldFilterMessage(text: string): boolean {
   }
 
   return false
+}
+
+function getMessageText(msg: any): string {
+  return msg?.text || msg?.content || msg?.message || ''
+}
+
+function getMessageTimestamp(msg: any): Date {
+  if (msg?._source === 'dom' && msg?.time) {
+    return parseBossTime(msg.time) || new Date()
+  }
+
+  return msg?.time ? new Date(msg.time) : new Date()
+}
+
+function normalizeMessageText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function findQuestionBoundaryIndex(
+  history: any[],
+  candidate: InterviewCandidate,
+  questionText?: string
+): number {
+  const normalizedQuestion = normalizeMessageText(questionText || '')
+
+  if (normalizedQuestion) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i]
+      if (!isSelfMessage(msg)) continue
+
+      const normalizedMessage = normalizeMessageText(getMessageText(msg))
+      if (!normalizedMessage) continue
+
+      if (
+        normalizedMessage === normalizedQuestion ||
+        normalizedMessage.includes(normalizedQuestion) ||
+        normalizedQuestion.includes(normalizedMessage)
+      ) {
+        console.log(
+          `[AnswerCollector] 按问题文本命中边界: index=${i}, text="${normalizedMessage.substring(0, 50)}"`
+        )
+        return i
+      }
+    }
+  }
+
+  if (candidate.lastQuestionAt) {
+    const questionTime = new Date(candidate.lastQuestionAt).getTime()
+    const fallbackWindowMs = 60 * 1000
+
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i]
+      if (!isSelfMessage(msg)) continue
+
+      const msgTime = getMessageTimestamp(msg).getTime()
+      if (msgTime >= questionTime - fallbackWindowMs) {
+        console.log(
+          `[AnswerCollector] 按发送时间兜底命中边界: index=${i}, msgTime=${new Date(msgTime).toISOString()}, questionTime=${new Date(questionTime).toISOString()}`
+        )
+        return i
+      }
+    }
+  }
+
+  return -1
+}
+
+function filterCandidateMessagesAfterQuestion(
+  history: any[],
+  candidate: InterviewCandidate,
+  questionText?: string
+): any[] {
+  const dedupedHistory = deduplicateMessages(history)
+  console.log(`[AnswerCollector] 历史消息: ${history.length}条, 去重后: ${dedupedHistory.length}条`)
+
+  const sampleMessages = dedupedHistory.slice(0, 5).map((msg: any) => ({
+    text: getMessageText(msg).substring(0, 30),
+    isSelf: msg.isSelf,
+    time: msg.time
+  }))
+  console.log(`[AnswerCollector] 示例消息:`, JSON.stringify(sampleMessages))
+
+  const boundaryIndex = findQuestionBoundaryIndex(dedupedHistory, candidate, questionText)
+  const scopedHistory = boundaryIndex >= 0
+    ? dedupedHistory.slice(boundaryIndex + 1)
+    : dedupedHistory
+
+  if (boundaryIndex >= 0) {
+    console.log(
+      `[AnswerCollector] 使用问题边界截断历史消息: boundaryIndex=${boundaryIndex}, 截断后=${scopedHistory.length}条`
+    )
+  } else {
+    console.log('[AnswerCollector] 未定位到问题边界，回退到时间过滤')
+  }
+
+  const candidateMessages = scopedHistory
+    .filter((msg: any) => {
+      const isSelf = isSelfMessage(msg)
+      if (!isSelf) {
+        console.log(`[AnswerCollector] 候选人消息: "${getMessageText(msg).substring(0, 50)}"`)
+      }
+      return !isSelf
+    })
+    .filter((msg: any) => {
+      if (shouldFilterMessage(getMessageText(msg))) {
+        return false
+      }
+      return true
+    })
+    .filter((msg: any) => {
+      if (boundaryIndex >= 0) {
+        return true
+      }
+
+      if (!candidate.lastQuestionAt) {
+        console.log('[AnswerCollector] lastQuestionAt 为空，不过滤时间，取最近的候选人消息')
+        return true
+      }
+
+      const msgTime = getMessageTimestamp(msg)
+      const questionTime = new Date(candidate.lastQuestionAt)
+      const isAfterQuestion = msgTime.getTime() >= questionTime.getTime()
+      console.log(
+        `[AnswerCollector] 消息时间检查: msgTime=${msgTime.toISOString()}, questionTime=${questionTime.toISOString()}, isAfter=${isAfterQuestion}`
+      )
+      return isAfterQuestion
+    })
+    .filter((msg: any) => {
+      if (!candidate.lastScoredAt) {
+        console.log('[AnswerCollector] lastScoredAt 为空，不过滤已评分消息')
+        return true
+      }
+
+      if (candidate.lastQuestionAt) {
+        const questionTime = new Date(candidate.lastQuestionAt).getTime()
+        const scoredTime = new Date(candidate.lastScoredAt).getTime()
+        if (questionTime > scoredTime) {
+          console.log(
+            `[AnswerCollector] 已发送新一轮问题（questionTime=${new Date(candidate.lastQuestionAt).toISOString()} > scoredTime=${new Date(candidate.lastScoredAt).toISOString()}），跳过 lastScoredAt 过滤`
+          )
+          return true
+        }
+      }
+
+      const msgTime = getMessageTimestamp(msg)
+      const scoredTime = new Date(candidate.lastScoredAt)
+      const isNew = msgTime.getTime() > scoredTime.getTime()
+      console.log(
+        `[AnswerCollector] 同轮次评分时间检查: msgTime=${msgTime.toISOString()}, scoredTime=${scoredTime.toISOString()}, isNew=${isNew}`
+      )
+      return isNew
+    })
+    .sort((a: any, b: any) => getMessageTimestamp(a).getTime() - getMessageTimestamp(b).getTime())
+
+  console.log(`[AnswerCollector] 筛选后候选人消息数量: ${candidateMessages.length}`)
+  return candidateMessages
+}
+
+async function collectCandidateReplyBurst(
+  page: Page,
+  candidate: InterviewCandidate,
+  questionText?: string,
+  maxMessages: number = 3,
+  idleWaitMs: number = 4000,
+  maxWaitMs: number = 12000,
+  pollIntervalMs: number = 1000
+): Promise<any[]> {
+  const history = await getChatHistory(page)
+
+  if (!history || history.length === 0) {
+    return []
+  }
+
+  let candidateMessages = filterCandidateMessagesAfterQuestion(history, candidate, questionText)
+  if (candidateMessages.length === 0) {
+    return []
+  }
+
+  if (candidateMessages.length >= maxMessages) {
+    return candidateMessages.slice(0, maxMessages)
+  }
+
+  const startedAt = Date.now()
+  let lastGrowthAt = startedAt
+
+  console.log(
+    `[AnswerCollector] 检测到候选人开始回复，进入聚合等待: 当前${candidateMessages.length}条, 最多${maxMessages}条, 空闲${idleWaitMs}ms, 最长${maxWaitMs}ms`
+  )
+
+  while (candidateMessages.length < maxMessages && Date.now() - startedAt < maxWaitMs) {
+    if (Date.now() - lastGrowthAt >= idleWaitMs) {
+      console.log('[AnswerCollector] 候选人回复进入空闲期，结束聚合等待')
+      break
+    }
+
+    await sleep(pollIntervalMs)
+
+    const nextHistory = await getChatHistory(page)
+    if (!nextHistory || nextHistory.length === 0) {
+      break
+    }
+
+    const nextMessages = filterCandidateMessagesAfterQuestion(nextHistory, candidate, questionText)
+    if (nextMessages.length > candidateMessages.length) {
+      candidateMessages = nextMessages
+      lastGrowthAt = Date.now()
+      console.log(`[AnswerCollector] 收到候选人后续回复，当前累计 ${candidateMessages.length} 条`)
+      continue
+    }
+
+    if (nextMessages.length === candidateMessages.length && nextMessages.length > 0) {
+      candidateMessages = nextMessages
+    }
+  }
+
+  return candidateMessages.slice(0, maxMessages)
 }
 
 /**
@@ -426,40 +643,39 @@ export function generateQaDisplayText(qaRecords: any[]): string {
  */
 export async function getLatestCandidateAnswer(
   page: Page,
-  candidate: InterviewCandidate
+  candidate: InterviewCandidate,
+  questionText?: string
 ): Promise<CandidateAnswer | null> {
   try {
-    const history = await getChatHistory(page)
-
-    if (!history || history.length === 0) {
+    const candidateMessages = await collectCandidateReplyBurst(
+      page,
+      candidate,
+      questionText,
+      3,
+      2000,
+      6000,
+      800
+    )
+    if (candidateMessages.length === 0) {
       return null
     }
 
-    for (let i = history.length - 1; i >= 0; i--) {
-      const msg = history[i]
-      const isSelf = isSelfMessage(msg)
+    const mergedText = cleanCandidateAnswer(
+      candidateMessages
+        .map((msg: any) => getMessageText(msg))
+        .filter((text: string) => text.trim())
+        .join('\n\n')
+    )
 
-      if (!isSelf) {
-        const text = msg.text || msg.content || msg.message || ''
-        const cleanedText = cleanCandidateAnswer(text.trim())
-        if (cleanedText) {
-          let timestamp = new Date()
-          if (msg._source === 'dom' && msg.time) {
-            timestamp = parseBossTime(msg.time) || new Date()
-          } else if (msg.time) {
-            timestamp = new Date(msg.time)
-          }
-
-          return {
-            text: cleanedText,
-            timestamp,
-            roundNumber: candidate.currentRound
-          }
-        }
-      }
+    if (!mergedText) {
+      return null
     }
 
-    return null
+    return {
+      text: mergedText,
+      timestamp: getMessageTimestamp(candidateMessages[candidateMessages.length - 1]),
+      roundNumber: candidate.currentRound
+    }
   } catch (error) {
     console.error('[AnswerCollector] 获取最新回复失败:', error)
     return null
@@ -665,137 +881,31 @@ export async function isLatestMessageFromCandidate(page: Page): Promise<boolean>
 export async function mergeMessagesInWindow(
   page: Page,
   candidate: InterviewCandidate,
-  windowSeconds: number = 30
+  questionTextOrWindowSeconds?: string | number,
+  windowSecondsArg: number = 30
 ): Promise<{ mergedText: string; messages: any[]; latestMessageTime: Date | null }> {
   try {
-    const history = await getChatHistory(page)
-
-    if (!history || history.length === 0) {
-      return { mergedText: '', messages: [], latestMessageTime: null }
-    }
-
-    const dedupedHistory = deduplicateMessages(history)
-    console.log(`[AnswerCollector] 历史消息: ${history.length}条, 去重后: ${dedupedHistory.length}条`)
-
-    const sampleMessages = dedupedHistory.slice(0, 5).map((msg: any) => ({
-      text: (msg.text || msg.content || msg.message || '').substring(0, 30),
-      isSelf: msg.isSelf,
-      time: msg.time
-    }))
-    console.log(`[AnswerCollector] 示例消息:`, JSON.stringify(sampleMessages))
-
-    // 筛选候选人的消息（非自己发送的）
-    const candidateMessages = dedupedHistory
-      .filter((msg: any) => {
-        const isSelf = isSelfMessage(msg)
-        if (!isSelf) {
-          console.log(`[AnswerCollector] 候选人消息: "${(msg.text || msg.content || msg.message || '').substring(0, 50)}"`)
-        }
-        return !isSelf
-      })
-      // 【新增】过滤简历卡片等无关消息
-      .filter((msg: any) => {
-        if (shouldFilterMessage(msg.text || msg.content || msg.message || '')) {
-          return false
-        }
-        return true
-      })
-      .filter((msg: any) => {
-        // 只取发送问题后的消息
-        if (!candidate.lastQuestionAt) {
-          console.log('[AnswerCollector] lastQuestionAt 为空，不过滤时间，取最近的候选人消息')
-          return true
-        }
-
-        // 【关键修复】从 DOM 解析的消息需要用 parseBossTime 解析时间
-        let msgTime: Date
-        if (msg._source === 'dom' && msg.time) {
-          const parsedTime = parseBossTime(msg.time)
-          if (parsedTime) {
-            msgTime = parsedTime
-            console.log(`[AnswerCollector] DOM时间解析: "${msg.time}" -> ${msgTime.toISOString()}`)
-          } else {
-            // 解析失败，使用当前时间
-            msgTime = new Date()
-            console.log(`[AnswerCollector] DOM时间解析失败: "${msg.time}"，使用当前时间`)
-          }
-        } else {
-          msgTime = msg.time ? new Date(msg.time) : new Date()
-        }
-
-        const questionTime = new Date(candidate.lastQuestionAt)
-        const isAfterQuestion = msgTime.getTime() >= questionTime.getTime()
-        console.log(`[AnswerCollector] 消息时间检查: msgTime=${msgTime.toISOString()}, questionTime=${questionTime.toISOString()}, isAfter=${isAfterQuestion}`)
-        return isAfterQuestion
-      })
-      .filter((msg: any) => {
-        // 【BUG修复】lastScoredAt 过滤只在同一轮次内生效
-        // 如果 lastQuestionAt 存在且晚于 lastScoredAt，说明已发送新一轮问题，
-        // 此时 lastQuestionAt 过滤已经确保只采集新一轮的回复，不需要再用 lastScoredAt 过滤
-        // 否则 lastScoredAt 会误杀第二轮及以后的所有新消息
-        if (!candidate.lastScoredAt) {
-          console.log('[AnswerCollector] lastScoredAt 为空，不过滤已评分消息')
-          return true
-        }
-
-        // 如果已经发送了新一轮问题（lastQuestionAt 晚于 lastScoredAt），跳过 lastScoredAt 过滤
-        if (candidate.lastQuestionAt) {
-          const questionTime = new Date(candidate.lastQuestionAt).getTime()
-          const scoredTime = new Date(candidate.lastScoredAt).getTime()
-          if (questionTime > scoredTime) {
-            console.log(`[AnswerCollector] 已发送新一轮问题（questionTime=${new Date(candidate.lastQuestionAt).toISOString()} > scoredTime=${new Date(candidate.lastScoredAt).toISOString()}），跳过 lastScoredAt 过滤`)
-            return true
-          }
-        }
-
-        // 同一轮次内，过滤已评分的消息
-        let msgTime: Date
-        if (msg._source === 'dom' && msg.time) {
-          const parsedTime = parseBossTime(msg.time)
-          msgTime = parsedTime || new Date()
-        } else {
-          msgTime = msg.time ? new Date(msg.time) : new Date()
-        }
-
-        const scoredTime = new Date(candidate.lastScoredAt)
-        const isNew = msgTime.getTime() > scoredTime.getTime()
-        console.log(`[AnswerCollector] 同轮次评分时间检查: msgTime=${msgTime.toISOString()}, scoredTime=${scoredTime.toISOString()}, isNew=${isNew}`)
-        return isNew
-      })
-
-    console.log(`[AnswerCollector] 筛选后候选人消息数量: ${candidateMessages.length}`)
-
+    const questionText = typeof questionTextOrWindowSeconds === 'string'
+      ? questionTextOrWindowSeconds
+      : undefined
+    const windowSeconds = typeof questionTextOrWindowSeconds === 'number'
+      ? questionTextOrWindowSeconds
+      : windowSecondsArg
     const maxMessages = 3
-    const limitedMessages = candidateMessages.slice(0, maxMessages)
+    const limitedMessages = await collectCandidateReplyBurst(
+      page,
+      candidate,
+      questionText,
+      maxMessages
+    )
 
     if (limitedMessages.length === 0) {
       console.log('[AnswerCollector] 没有新消息需要评分（已评分消息已被过滤）')
       return { mergedText: '', messages: [], latestMessageTime: null }
     }
 
-    limitedMessages.sort((a: any, b: any) => {
-      let timeA: number, timeB: number
-      if (a._source === 'dom' && a.time) {
-        const parsed = parseBossTime(a.time)
-        timeA = parsed ? parsed.getTime() : 0
-      } else {
-        timeA = a.time ? new Date(a.time).getTime() : 0
-      }
-
-      if (b._source === 'dom' && b.time) {
-        const parsed = parseBossTime(b.time)
-        timeB = parsed ? parsed.getTime() : 0
-      } else {
-        timeB = b.time ? new Date(b.time).getTime() : 0
-      }
-
-      return timeA - timeB
-    })
-
     const lastMsg = limitedMessages[limitedMessages.length - 1]
-    const latestMessageTime = lastMsg?.time
-      ? (lastMsg._source === 'dom' ? parseBossTime(lastMsg.time) || new Date() : new Date(lastMsg.time))
-      : new Date()
+    const latestMessageTime = lastMsg ? getMessageTimestamp(lastMsg) : new Date()
 
     const merged: any[] = []
     let currentGroup: any[] = [limitedMessages[0]]
@@ -804,20 +914,8 @@ export async function mergeMessagesInWindow(
       const prevMsg = limitedMessages[i - 1]
       const currMsg = limitedMessages[i]
 
-      let prevTime: number, currTime: number
-      if (prevMsg._source === 'dom' && prevMsg.time) {
-        const parsed = parseBossTime(prevMsg.time)
-        prevTime = parsed ? parsed.getTime() : 0
-      } else {
-        prevTime = prevMsg.time ? new Date(prevMsg.time).getTime() : 0
-      }
-
-      if (currMsg._source === 'dom' && currMsg.time) {
-        const parsed = parseBossTime(currMsg.time)
-        currTime = parsed ? parsed.getTime() : 0
-      } else {
-        currTime = currMsg.time ? new Date(currMsg.time).getTime() : 0
-      }
+      const prevTime = getMessageTimestamp(prevMsg).getTime()
+      const currTime = getMessageTimestamp(currMsg).getTime()
 
       if (currTime - prevTime <= windowSeconds * 1000) {
         currentGroup.push(currMsg)
@@ -829,7 +927,7 @@ export async function mergeMessagesInWindow(
     merged.push(...currentGroup)
 
     const rawText = merged
-      .map((msg: any) => msg.text || msg.content || msg.message || '')
+      .map((msg: any) => getMessageText(msg))
       .filter((text: string) => text.trim())
       .join('\n\n')
 

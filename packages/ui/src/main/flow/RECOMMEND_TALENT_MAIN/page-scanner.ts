@@ -50,7 +50,8 @@ async function extractCardsFromFrame(
     }
 
     function parseWorkYears(parts: string[]): number {
-      const workYearText = parts.find((part) => part.includes('应届生') || /\d+\s*年/.test(part)) || ''
+      const workYearText =
+        parts.find((part) => part.includes('应届生') || /\d+\s*年/.test(part)) || ''
       if (workYearText.includes('应届生')) {
         return 0
       }
@@ -168,7 +169,9 @@ async function extractCardsFromFrame(
       for (const selector of directSelectors) {
         const found = Array.from(document.querySelectorAll(selector)).filter((el) => {
           const text = textOf(el)
-          return text.includes('打招呼') && (text.includes('岁') || !!el.querySelector('.base-info'))
+          return (
+            text.includes('打招呼') && (text.includes('岁') || !!el.querySelector('.base-info'))
+          )
         })
         if (found.length > 0) {
           return {
@@ -183,9 +186,11 @@ async function extractCardsFromFrame(
         }
       }
 
-      const greetTriggers = Array.from(document.querySelectorAll('button, a, span, div')).filter((el) => {
-        return textOf(el) === '打招呼'
-      })
+      const greetTriggers = Array.from(document.querySelectorAll('button, a, span, div')).filter(
+        (el) => {
+          return textOf(el) === '打招呼'
+        }
+      )
 
       const cards = greetTriggers
         .map((trigger) => {
@@ -236,7 +241,11 @@ async function extractCardsFromFrame(
         }
       }
 
-      const attrNodes = Array.from(el.querySelectorAll('[href], [data-geek], [data-id], [data-user-id], [data-geek-id], [data-encrypt-geek-id]'))
+      const attrNodes = Array.from(
+        el.querySelectorAll(
+          '[href], [data-geek], [data-id], [data-user-id], [data-geek-id], [data-encrypt-geek-id]'
+        )
+      )
       for (const node of attrNodes) {
         const href = node.getAttribute('href') || ''
         const joined = `${href} ${node.getAttribute('data-geek') || ''} ${node.getAttribute('data-id') || ''} ${node.getAttribute('data-user-id') || ''} ${node.getAttribute('data-geek-id') || ''} ${node.getAttribute('data-encrypt-geek-id') || ''}`
@@ -258,82 +267,85 @@ async function extractCardsFromFrame(
     }
 
     return {
-      cards: cardElements.map((el, index) => {
-      const textContent = textOf(el)
-      const baseInfoTexts = Array.from(el.querySelectorAll('.join-text-wrap.base-info span'))
-        .map((span) => textOf(span))
-        .filter(Boolean)
+      cards: cardElements
+        .map((el, index) => {
+          const textContent = textOf(el)
+          const baseInfoTexts = Array.from(el.querySelectorAll('.join-text-wrap.base-info span'))
+            .map((span) => textOf(span))
+            .filter(Boolean)
 
-      const fallbackKey = `recommend_f${runtimeFrameIndex}_${index}_${hashText(textContent.slice(0, 200))}`
-      el.setAttribute(CARD_KEY_ATTR, fallbackKey)
+          const fallbackKey = `recommend_f${runtimeFrameIndex}_${index}_${hashText(textContent.slice(0, 200))}`
+          el.setAttribute(CARD_KEY_ATTR, fallbackKey)
 
-      const vue = (el as any).__vue__
-      const props = vue?._props || vue?.$props || {}
-      const data = props.geek || props.item || props.candidate || props.data || {}
+          const vue = (el as any).__vue__
+          const props = vue?._props || vue?.$props || {}
+          const data = props.geek || props.item || props.candidate || props.data || {}
 
-      const name =
-        data.name ||
-        data.geekName ||
-        textOf(el.querySelector('.name')) ||
-        textOf(el.querySelector('[class*="name"]')) ||
-        textOf(el.querySelector('h3')) ||
-        textOf(el.querySelector('h4'))
+          const name =
+            data.name ||
+            data.geekName ||
+            textOf(el.querySelector('.name')) ||
+            textOf(el.querySelector('[class*="name"]')) ||
+            textOf(el.querySelector('h3')) ||
+            textOf(el.querySelector('h4'))
 
-      const activeStatus =
-        data.activeDesc ||
-        data.activeStatus ||
-        parseActiveStatus(textContent)
+          const activeStatus =
+            data.activeDesc || data.activeStatus || parseActiveStatus(textContent)
 
-      const salaryText =
-        textOf(el.querySelector('.salary-wrap span')) ||
-        textOf(el.querySelector('[class*="salary-wrap"] span')) ||
-        textOf(el.querySelector('[class*="salary"] span')) ||
-        textOf(el.querySelector('[class*="salary"]')) ||
-        parseExpectedSalaryText(textContent)
+          const salaryText =
+            textOf(el.querySelector('.salary-wrap span')) ||
+            textOf(el.querySelector('[class*="salary-wrap"] span')) ||
+            textOf(el.querySelector('[class*="salary"] span')) ||
+            textOf(el.querySelector('[class*="salary"]')) ||
+            parseExpectedSalaryText(textContent)
 
-      const normalizedSalaryText =
-        parseExpectedSalaryText(salaryText) ||
-        parseExpectedSalaryText(textContent)
+          const normalizedSalaryText =
+            parseExpectedSalaryText(salaryText) || parseExpectedSalaryText(textContent)
 
-      const fallbackSalaryText =
-        data.expectSalaryText ||
-        (data.expectSalary ? `${data.expectSalary}K` : '')
+          const fallbackSalaryText =
+            data.expectSalaryText || (data.expectSalary ? `${data.expectSalary}K` : '')
 
-      const cityCandidate =
-        textOf(el.querySelector('[class*="city"]')) ||
-        textOf(el.querySelector('[class*="location"]'))
+          const cityCandidate =
+            textOf(el.querySelector('[class*="city"]')) ||
+            textOf(el.querySelector('[class*="location"]'))
 
-      const currentCompany =
-        data.company ||
-        data.currentCompany ||
-        textOf(el.querySelector('[class*="company"]'))
+          const currentCompany =
+            data.company || data.currentCompany || textOf(el.querySelector('[class*="company"]'))
 
-      const currentPosition =
-        data.position ||
-        data.currentPosition ||
-        textOf(el.querySelector('[class*="position"]')) ||
-        textOf(el.querySelector('[class*="job"]'))
+          const currentPosition =
+            data.position ||
+            data.currentPosition ||
+            textOf(el.querySelector('[class*="position"]')) ||
+            textOf(el.querySelector('[class*="job"]'))
 
-      const cardKey = el.getAttribute(CARD_KEY_ATTR) || fallbackKey
+          const cardKey = el.getAttribute(CARD_KEY_ATTR) || fallbackKey
 
-      return {
-        cardKey,
-        frameIndex: runtimeFrameIndex,
-        name,
-        encryptUserId: data.encryptGeekId || data.encryptUserId || data.geekId || extractEncryptUserId(el, cardKey),
-        avatar: data.avatar || '',
-        age: parseAge(baseInfoTexts),
-        degree: data.degree || parseDegree(baseInfoTexts),
-        workYears: Number(data.workYear || data.workYears) || parseWorkYears(baseInfoTexts),
-        city: data.city || cityCandidate || '',
-        expectedSalary: String(normalizedSalaryText || fallbackSalaryText || '').trim(),
-        currentCompany,
-        currentPosition,
-        activeDaysAgo: Number(data.activeDaysAgo) || parseActiveDaysAgo(activeStatus),
-        activeStatus,
-        isJobSeeking: data.isJobSeeking === true || data.jobStatus === '在看机会' || textContent.includes('在职-考虑机会'),
-      }
-    }).filter((card) => Boolean(card.encryptUserId && card.name)),
+          return {
+            cardKey,
+            frameIndex: runtimeFrameIndex,
+            name,
+            encryptUserId:
+              data.encryptGeekId ||
+              data.encryptUserId ||
+              data.geekId ||
+              extractEncryptUserId(el, cardKey),
+            avatar: data.avatar || '',
+            age: parseAge(baseInfoTexts),
+            degree: data.degree || parseDegree(baseInfoTexts),
+            workYears: Number(data.workYear || data.workYears) || parseWorkYears(baseInfoTexts),
+            city: data.city || cityCandidate || '',
+            expectedSalary: String(normalizedSalaryText || fallbackSalaryText || '').trim(),
+            currentCompany,
+            currentPosition,
+            activeDaysAgo: Number(data.activeDaysAgo) || parseActiveDaysAgo(activeStatus),
+            activeStatus,
+            isJobSeeking:
+              data.isJobSeeking === true ||
+              data.jobStatus === '在看机会' ||
+              textContent.includes('在职-考虑机会')
+          }
+        })
+        .filter((card) => Boolean(card.encryptUserId && card.name)),
       stats
     }
   }, frameIndex)
@@ -369,18 +381,32 @@ export async function scrollPage(page: Page): Promise<boolean> {
   // 随机滚动距离
   const scrollDelta = 200 + Math.random() * 200
 
-  await page.mouse.wheel(0, scrollDelta)
+  // 优先在推荐牛人 iframe 内滚动，因为候选人卡片在 iframe 中渲染
+  const targetFrame = getRecommendFrame(page)
+  const scrollTarget = targetFrame || page
+  await scrollTarget.evaluate((delta) => {
+    window.scrollBy(0, delta)
+  }, scrollDelta)
 
   // 随机延迟 1-3 秒
   const delay = 1000 + Math.random() * 2000
   await sleep(delay)
 
   // 检查是否有新内容加载
-  const hasNewContent = await page.evaluate(() => {
+  const hasNewContent = await scrollTarget.evaluate(() => {
     return document.body.scrollHeight > window.innerHeight + window.scrollY
   })
 
   return hasNewContent
+}
+
+function getRecommendFrame(page: Page): Frame | null {
+  for (const frame of page.frames()) {
+    if (frame.url().includes('/frame/recommend')) {
+      return frame
+    }
+  }
+  return null
 }
 
 export async function scrollToTop(page: Page): Promise<void> {

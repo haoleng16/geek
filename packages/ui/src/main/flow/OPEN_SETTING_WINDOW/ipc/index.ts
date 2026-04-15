@@ -693,7 +693,10 @@ export default function initIpc() {
         }
       })
     })
-    await sendToDaemon({ type: 'stop-worker', workerId: 'recommendTalentMain' }, { needCallback: true })
+    await sendToDaemon(
+      { type: 'stop-worker', workerId: 'recommendTalentMain' },
+      { needCallback: true }
+    )
     await p
   })
 
@@ -706,19 +709,25 @@ export default function initIpc() {
 
   // 测试VL模型连接
   ipcMain.handle('test-vl-model', async () => {
-    const { getLlmConfig } = await import('../../SMART_REPLY_MAIN/llm-reply')
+    const { readConfigFile } = await import(
+      '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
+    )
     const { completes } = await import('@geekgeekrun/utils/gpt-request.mjs')
     try {
-      const llmConfig = await getLlmConfig()
+      const vlConfigList = await readConfigFile('vl.json')
+      const llmConfig = vlConfigList?.find((it: any) => it.enabled)
       if (!llmConfig) {
-        return { success: false, error: '未找到LLM配置，请先在「大语言模型设置」中配置API' }
+        return { success: false, error: '未找到VL模型配置，请在设置中配置视觉模型' }
       }
-      const completion = await completes({
-        baseURL: llmConfig.providerCompleteApiUrl,
-        apiKey: llmConfig.providerApiSecret,
-        model: llmConfig.model,
-        maxTokens: 50
-      }, [{ role: 'user', content: '请回复"连接成功"' }])
+      const completion = await completes(
+        {
+          baseURL: llmConfig.providerCompleteApiUrl,
+          apiKey: llmConfig.providerApiSecret,
+          model: llmConfig.model,
+          maxTokens: 50
+        },
+        [{ role: 'user', content: '请回复"连接成功"' }]
+      )
       const content = completion?.choices?.[0]?.message?.content || ''
       return { success: true, model: llmConfig.model, response: content }
     } catch (err: any) {
@@ -750,7 +759,12 @@ export default function initIpc() {
     const result = await getRecommendCandidates(params)
     // result from worker is { data: { data: [...], total: N, page, pageSize } }
     const inner = result?.data ?? result
-    return { data: inner?.data || [], total: inner?.total || 0, page: inner?.page || 1, pageSize: inner?.pageSize || 20 }
+    return {
+      data: inner?.data || [],
+      total: inner?.total || 0,
+      page: inner?.page || 1,
+      pageSize: inner?.pageSize || 20
+    }
   })
 
   // 获取推荐候选人详情
@@ -765,15 +779,18 @@ export default function initIpc() {
   })
 
   // 获取简历截图
-  ipcMain.handle('recommend-get-snapshot', async (_, payload: number | { candidateId?: number }) => {
-    const { getRecommendResumeSnapshot } = await import('../utils/db/index')
-    const candidateId = typeof payload === 'number' ? payload : payload?.candidateId
-    if (!candidateId) {
-      throw new Error('recommend-get-snapshot requires candidateId')
+  ipcMain.handle(
+    'recommend-get-snapshot',
+    async (_, payload: number | { candidateId?: number }) => {
+      const { getRecommendResumeSnapshot } = await import('../utils/db/index')
+      const candidateId = typeof payload === 'number' ? payload : payload?.candidateId
+      if (!candidateId) {
+        throw new Error('recommend-get-snapshot requires candidateId')
+      }
+      const result = await getRecommendResumeSnapshot(candidateId)
+      return result?.data ?? result ?? null
     }
-    const result = await getRecommendResumeSnapshot(candidateId)
-    return result?.data ?? result ?? null
-  })
+  )
 
   // 获取推荐牛人会话列表
   ipcMain.handle('recommend-get-sessions', async () => {
@@ -901,11 +918,9 @@ export default function initIpc() {
   // 获取候选人详情
   ipcMain.handle('interview-get-candidate-detail', async (_, id: number) => {
     try {
-      const {
-        getInterviewCandidate,
-        getInterviewQaRecordList,
-        getInterviewResume
-      } = await import('../utils/db/index')
+      const { getInterviewCandidate, getInterviewQaRecordList, getInterviewResume } = await import(
+        '../utils/db/index'
+      )
 
       const candidateResult = await getInterviewCandidate(id)
       const qaResult = await getInterviewQaRecordList(id)
@@ -1046,7 +1061,7 @@ export default function initIpc() {
     try {
       const { runManualTest } = await import('../../INTERVIEW_AUTO_MAIN/manual-test')
       // 异步执行，不阻塞
-      runManualTest().catch(err => {
+      runManualTest().catch((err) => {
         console.error('interview-manual-test error:', err)
       })
       return { success: true }

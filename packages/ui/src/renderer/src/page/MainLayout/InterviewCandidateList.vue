@@ -161,10 +161,9 @@
             <el-card shadow="never">
               <p><strong>问题：</strong>{{ qa.questionText }}</p>
               <p><strong>回答：</strong>{{ qa.answerText || '（未回答）' }}</p>
-              <p v-if="qa.keywordScore || qa.llmScore">
-                <strong>评分：</strong>
-                关键词 {{ qa.keywordScore || 0 }}分 +
-                AI {{ qa.llmScore || 0 }}分
+              <p v-if="qa.llmScore || qa.totalScore">
+                <strong>AI评分：</strong>
+                {{ qa.llmScore || qa.totalScore || 0 }}分
               </p>
               <p v-if="qa.llmReason"><strong>AI理由：</strong>{{ qa.llmReason }}</p>
             </el-card>

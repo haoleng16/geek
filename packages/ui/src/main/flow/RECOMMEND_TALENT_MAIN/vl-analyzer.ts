@@ -1,5 +1,5 @@
 import { completes } from '@geekgeekrun/utils/gpt-request.mjs'
-import { getLlmConfig } from '../SMART_REPLY_MAIN/llm-reply'
+import { readConfigFile } from '@geekgeekrun/geek-auto-start-chat-with-boss/runtime-file-utils.mjs'
 import { readScreenshotAsBase64 } from './screenshot'
 
 export interface VLAnalysisResult {
@@ -28,9 +28,10 @@ export async function analyzeWithVL(
 }> {
   const startTime = Date.now()
 
-  const llmConfig = await getLlmConfig()
+  const vlConfigList = await readConfigFile('vl.json')
+  const llmConfig = vlConfigList?.find((it: any) => it.enabled)
   if (!llmConfig) {
-    throw new Error('未找到LLM配置')
+    throw new Error('未找到VL模型配置，请在设置中配置视觉模型')
   }
 
   const normalizedExtraResumeText = extraResumeText?.trim()
