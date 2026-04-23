@@ -28,7 +28,8 @@ import {
   saveInterviewOperationLog,
   countInterviewCandidatesByStatus
 } from '@geekgeekrun/sqlite-plugin/handlers'
-import { testSmtpConnection } from './email-sender'
+import { InterviewCandidateStatus } from '@geekgeekrun/sqlite-plugin/entity/InterviewCandidate'
+import { sendCandidateSummaryEmail, testSmtpConnection, type SmtpConfig } from './email-sender'
 import { testLlmConnection } from '../SMART_REPLY_MAIN/llm-reply'
 import { exportCandidatesToExcel } from './excel-export'
 import { initDb } from '@geekgeekrun/sqlite-plugin'
@@ -54,6 +55,96 @@ async function getDataSource(): Promise<DataSource> {
     throw e
   }
   return dataSource
+}
+
+interface CandidateSummaryMailParams {
+  status?: string
+  jobPositionId?: number
+  updatedAtStart?: string
+  updatedAtEnd?: string
+}
+
+async function sendCandidateSummaryEmailForParams(
+  ds: DataSource,
+  params: CandidateSummaryMailParams
+) {
+  const smtpConfigText = await getInterviewSystemConfig(ds, 'smtp_config')
+  if (!smtpConfigText) {
+    throw new Error('请先在邮件设置中保存 SMTP 配置')
+  }
+
+  let smtpConfig: SmtpConfig
+  try {
+    smtpConfig = JSON.parse(smtpConfigText) as SmtpConfig
+  } catch {
+    throw new Error('SMTP 配置格式错误，请重新保存邮件设置')
+  }
+
+  if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.password || !smtpConfig.recipient) {
+    throw new Error('SMTP 配置不完整，请检查收件邮箱和授权信息')
+  }
+
+  const candidateResult = await getInterviewCandidateList(ds, {
+    ...params,
+    page: 1,
+    pageSize: 10000
+  })
+
+  const candidates = candidateResult.list || []
+  if (candidates.length === 0) {
+    throw new Error('当前筛选结果没有可发送的候选人')
+  }
+
+  const candidatesWithQa = await Promise.all(
+    candidates.map(async (candidate) => {
+      const qaRecords = await getInterviewQaRecordList(ds, candidate.id)
+      return {
+        ...candidate,
+        qaRecords
+      }
+    })
+  )
+
+  const subject = `【候选人看板】候选人汇总 ${new Date().toLocaleDateString('zh-CN')} (${candidatesWithQa.length}人)`
+  const sendResult = await sendCandidateSummaryEmail({
+    config: smtpConfig,
+    candidates: candidatesWithQa,
+    subject
+  })
+
+  if (!sendResult.success) {
+    throw new Error(sendResult.error || '邮件发送失败')
+  }
+
+  const sentAt = new Date()
+  for (const candidate of candidatesWithQa) {
+    await updateInterviewCandidateStatus(ds, candidate.id, InterviewCandidateStatus.EMAILED)
+
+    const resume = await getInterviewResume(ds, candidate.id)
+    if (resume) {
+      await saveInterviewResume(ds, {
+        id: resume.id,
+        candidateId: candidate.id,
+        emailedAt: sentAt,
+        emailRecipient: smtpConfig.recipient
+      })
+    }
+
+    await saveInterviewOperationLog(ds, {
+      candidateId: candidate.id,
+      action: 'summary_email_sent',
+      detail: JSON.stringify({
+        recipient: smtpConfig.recipient,
+        sentAt: sentAt.toISOString(),
+        filter: params
+      })
+    })
+  }
+
+  return {
+    count: candidatesWithQa.length,
+    recipient: smtpConfig.recipient
+  }
 }
 
 /**
@@ -204,9 +295,9 @@ export function initInterviewIpcHandlers(ds: DataSource) {
   )
 
   // 获取候选人统计数据
-  ipcMain.handle('interview-get-candidate-stats', async () => {
+  ipcMain.handle('interview-get-candidate-stats', async (_, params: any) => {
     try {
-      const stats = await countInterviewCandidatesByStatus(dataSource)
+      const stats = await countInterviewCandidatesByStatus(dataSource, params)
       return { success: true, data: stats }
     } catch (error: any) {
       return { success: false, error: error?.message }
@@ -216,7 +307,7 @@ export function initInterviewIpcHandlers(ds: DataSource) {
   // 导出候选人Excel
   ipcMain.handle(
     'interview-export-candidates-excel',
-    async (_, params: { status?: string; jobPositionId?: number }) => {
+    async (_, params: { status?: string; jobPositionId?: number; updatedAtStart?: string; updatedAtEnd?: string }) => {
       try {
         const filePath = await exportCandidatesToExcel(dataSource, params)
         return { success: true, data: filePath }
@@ -226,6 +317,15 @@ export function initInterviewIpcHandlers(ds: DataSource) {
       }
     }
   )
+
+  ipcMain.handle('interview-send-candidate-summary-email', async (_, params: CandidateSummaryMailParams) => {
+    try {
+      const result = await sendCandidateSummaryEmailForParams(dataSource, params)
+      return { success: true, data: result }
+    } catch (error: any) {
+      return { success: false, error: error?.message }
+    }
+  })
 
   // ==================== 系统配置 ====================
 
@@ -324,6 +424,7 @@ export function removeInterviewIpcHandlers() {
     'interview-update-candidate-status',
     'interview-get-candidate-stats',
     'interview-export-candidates-excel',
+    'interview-send-candidate-summary-email',
     'interview-get-config',
     'interview-get-all-config',
     'interview-save-config',
@@ -442,10 +543,10 @@ export function initInterviewIpcHandlersLazy() {
     }
   })
 
-  ipcMain.handle('interview-get-candidate-stats', async () => {
+  ipcMain.handle('interview-get-candidate-stats', async (_, params: any) => {
     try {
       const ds = await getDataSource()
-      const stats = await countInterviewCandidatesByStatus(ds)
+      const stats = await countInterviewCandidatesByStatus(ds, params)
       return { success: true, data: stats }
     } catch (error: any) {
       return { success: false, error: error?.message }
@@ -456,7 +557,7 @@ export function initInterviewIpcHandlersLazy() {
 
   ipcMain.handle(
     'interview-export-candidates-excel',
-    async (_, params: { status?: string; jobPositionId?: number }) => {
+    async (_, params: { status?: string; jobPositionId?: number; updatedAtStart?: string; updatedAtEnd?: string }) => {
       try {
         const ds = await getDataSource()
         const filePath = await exportCandidatesToExcel(ds, params)
@@ -466,6 +567,16 @@ export function initInterviewIpcHandlersLazy() {
       }
     }
   )
+
+  ipcMain.handle('interview-send-candidate-summary-email', async (_, params: CandidateSummaryMailParams) => {
+    try {
+      const ds = await getDataSource()
+      const result = await sendCandidateSummaryEmailForParams(ds, params)
+      return { success: true, data: result }
+    } catch (error: any) {
+      return { success: false, error: error?.message }
+    }
+  })
 
   // ==================== 系统配置 ====================
 
@@ -513,7 +624,7 @@ export function initInterviewIpcHandlersLazy() {
   ipcMain.handle('interview-save-email-config', async (_, config: any) => {
     try {
       const ds = await getDataSource()
-      await saveInterviewSystemConfig(ds, 'emailConfig', config)
+      await saveInterviewSystemConfig(ds, 'smtp_config', JSON.stringify(config), true)
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error?.message }

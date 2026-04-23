@@ -26,6 +26,5 @@ export async function detectCaptcha(page: Page): Promise<boolean> {
       return true
     }
   }
-
   return false
 }

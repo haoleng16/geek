@@ -71,6 +71,7 @@ import { AddRecommendTalentTables1811111111111 } from "./migrations/181111111111
 import { AddWorkYearOptionsToRecommendJobConfig1811111111112 } from "./migrations/1811111111112-AddWorkYearOptionsToRecommendJobConfig";
 import { UpdateRecommendJobConfigConstraints1811111111113 } from "./migrations/1811111111113-UpdateRecommendJobConfigConstraints";
 import { AddDomTextToRecommendResumeSnapshot1811111111114 } from "./migrations/1811111111114-AddDomTextToRecommendResumeSnapshot";
+import { FixInterviewCandidateDuplicates1800000000007 } from "./migrations/1800000000007-FixInterviewCandidateDuplicates";
 import chunk from "lodash/chunk";
 import * as typeorm from "typeorm";
 
@@ -143,6 +144,7 @@ export function initDb(dbFilePath) {
       AddWorkYearOptionsToRecommendJobConfig1811111111112,
       UpdateRecommendJobConfigConstraints1811111111113,
       AddDomTextToRecommendResumeSnapshot1811111111114,
+      FixInterviewCandidateDuplicates1800000000007,
     ],
     migrationsRun: true,
   });

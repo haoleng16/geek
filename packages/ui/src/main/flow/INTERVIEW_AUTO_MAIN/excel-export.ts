@@ -45,7 +45,12 @@ function formatValue(value: any): string {
 
 export async function exportCandidatesToExcel(
   ds: DataSource,
-  params: { status?: string; jobPositionId?: number }
+  params: {
+    status?: string
+    jobPositionId?: number
+    updatedAtStart?: string
+    updatedAtEnd?: string
+  }
 ): Promise<string> {
   // 获取所有候选人数据（不分页）
   const result = await getInterviewCandidateList(ds, {

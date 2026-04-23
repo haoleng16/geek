@@ -392,11 +392,20 @@ const mainLoop = async () => {
         await clickChatItemByIdentifier(pageMapByName.boss!, targetChat)
         await sleepWhileWatchingBrowser(2000)
 
+        // 【关键修复】验证聊天窗口已正确切换到目标候选人
+        // 防止 Vue 组件内部数据（__vue__.list$）还未更新导致读到上一个人的消息
+        await waitForChatSwitch(
+          pageMapByName.boss!,
+          targetChat.encryptGeekId || targetChat.name || ''
+        )
+
         // 获取候选人信息
+        // 关键修复：encryptGeekId 和 geekName 以左侧列表 targetChat 为准（来源是 DOM key 属性，最稳定）
+        // getCurrentChatGeekInfo 从右侧聊天窗口读取，切换时可能读到上一个人的残留数据
         const geekInfo = await getCurrentChatGeekInfo(pageMapByName.boss!)
-        const encryptGeekId = geekInfo?.encryptGeekId || targetChat.encryptGeekId || ''
-        const geekName = geekInfo?.name || targetChat.name || ''
-        const encryptJobId = targetChat.encryptJobId || ''
+        const encryptGeekId = targetChat.encryptGeekId || geekInfo?.encryptGeekId || ''
+        const geekName = targetChat.name || geekInfo?.name || ''
+        const encryptJobId = geekInfo?.encryptJobId || targetChat.encryptJobId || ''
 
         if (!encryptGeekId) {
           console.log('[Interview MainLoop] 无法获取候选人ID，跳过')
@@ -482,6 +491,16 @@ const mainLoop = async () => {
             cfg
           )
         }
+
+        // 【关键修复】切换到下一个人之前，重新检查当前聊天窗口是否有新回复
+        // 防止候选人在处理期间发了消息但消息被标记为已读导致丢失
+        await recheckCurrentChatBeforeSwitch(
+          dataSource!,
+          pageMapByName.boss!,
+          candidate,
+          jobPosition,
+          cfg
+        )
 
         // 风控延迟
         await randomDelay()
@@ -617,6 +636,65 @@ async function processFallbackCandidate(
     console.error('[Interview MainLoop] 兜底处理候选人失败:', error)
     return false
   }
+}
+
+/**
+ * 切换到下一个候选人之前，重新检查当前聊天窗口是否有新回复
+ * 解决场景：处理候选人期间对方发了消息，但消息被 BOSS 标记为已读导致丢失
+ */
+async function recheckCurrentChatBeforeSwitch(
+  ds: DataSource,
+  page: Page,
+  lastProcessedCandidate: InterviewCandidate,
+  lastJobPosition: any,
+  config: any
+): Promise<void> {
+  const waitingStatuses = new Set([
+    InterviewCandidateStatus.WAITING_ROUND_1,
+    InterviewCandidateStatus.WAITING_ROUND_2,
+    InterviewCandidateStatus.WAITING_ROUND_N,
+    InterviewCandidateStatus.REPLY_EXTRACTION_FAILED,
+    InterviewCandidateStatus.RESUME_REQUESTED,
+    InterviewCandidateStatus.RESUME_AGREED
+  ])
+
+  if (!waitingStatuses.has(lastProcessedCandidate.status)) {
+    return
+  }
+
+  const latestIsCandidate = await isLatestMessageFromCandidate(page)
+  if (!latestIsCandidate) {
+    return
+  }
+
+  // 重新从数据库读取最新状态，避免用过期数据
+  const freshCandidate = await getInterviewCandidate(
+    ds,
+    lastProcessedCandidate.encryptGeekId,
+    lastProcessedCandidate.encryptJobId || ''
+  )
+  if (!freshCandidate || !waitingStatuses.has(freshCandidate.status)) {
+    return
+  }
+
+  let jobPosition = lastJobPosition
+  if (
+    freshCandidate.jobPositionId &&
+    (!jobPosition || jobPosition.id !== freshCandidate.jobPositionId)
+  ) {
+    jobPosition = await getInterviewJobPositionWithDetails(ds, freshCandidate.jobPositionId)
+  }
+
+  if (!jobPosition) {
+    return
+  }
+
+  console.log(
+    '[Interview MainLoop] 切换前检测到新回复，立即处理:',
+    freshCandidate.geekName,
+    freshCandidate.status
+  )
+  await handleCandidateByStatus(ds, page, freshCandidate, jobPosition, config)
 }
 
 async function saveFilteredOutCandidate(
@@ -965,7 +1043,7 @@ async function getChatList(page: Page): Promise<ChatListItem[]> {
           props.geek || props.item || props.message || props.user || props.data || props.row || {}
 
         return {
-          name: name || data.name || data.geekName || '',
+          name: data.name || data.geekName || name || '',
           encryptGeekId: keyId || data.encryptGeekId || '',
           unreadCount: unreadCount || data.unreadCount || data.newMsgCount || 0,
           lastIsSelf: data.isSelf === true || data.lastIsSelf === true,
@@ -1060,6 +1138,80 @@ async function clickChatItemByIdentifier(page: Page, chatItem: any) {
   } catch (error) {
     console.error('[Interview MainLoop] 通过标识点击聊天项失败:', error)
   }
+}
+
+/**
+ * 【关键修复】等待聊天窗口完全切换到目标候选人
+ *
+ * 问题：点击聊天项后，DOM 视觉上已切换，但 Vue 组件内部数据（__vue__.list$）
+ * 可能仍持有上一个人的消息。getChatHistory 优先读 Vue 数据，导致读到错误消息。
+ *
+ * 解决：通过反复检查聊天头部 Vue 组件中的 geekId/name 是否匹配目标来确认切换完成。
+ */
+async function waitForChatSwitch(
+  page: Page,
+  expectedIdentifier: string,
+  maxRetries: number = 5
+): Promise<void> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const currentIdentity = await page.evaluate(() => {
+      // 从聊天头部/记录区域的 Vue 组件获取当前聊天对象
+      const chatRecordVue = (document.querySelector('.chat-conversation .chat-record') as any)
+        ?.__vue__
+      if (chatRecordVue) {
+        const geek = chatRecordVue.geek || chatRecordVue.boss || chatRecordVue.$props?.geek || {}
+        return {
+          encryptGeekId: geek.encryptGeekId || geek.encryptBossId || geek.securityId || '',
+          name: geek.name || geek.geekName || ''
+        }
+      }
+
+      // 从聊天头部 Vue 组件获取
+      const headerEl = document.querySelector(
+        '.chat-conversation .chat-header, .conversation-header'
+      )
+      if (headerEl) {
+        const vue = (headerEl as any).__vue__
+        if (vue) {
+          const geek = vue.geek || vue.boss || vue.$props?.geek || {}
+          return {
+            encryptGeekId: geek.encryptGeekId || geek.encryptBossId || geek.securityId || '',
+            name: geek.name || geek.geekName || ''
+          }
+        }
+      }
+
+      // 从 DOM 获取
+      const nameEl = document.querySelector(
+        '.chat-conversation .user-name, .geek-name, .chat-header .name'
+      )
+      return {
+        encryptGeekId: '',
+        name: nameEl?.textContent?.trim() || ''
+      }
+    })
+
+    const matched =
+      currentIdentity.encryptGeekId === expectedIdentifier ||
+      (currentIdentity.name && expectedIdentifier.includes(currentIdentity.name)) ||
+      (currentIdentity.name && currentIdentity.name.includes(expectedIdentifier))
+
+    if (matched) {
+      // 额外等待 Vue 组件内部数据同步
+      await sleep(500)
+      return
+    }
+
+    console.log(
+      `[Interview MainLoop] 聊天切换验证失败 (${attempt + 1}/${maxRetries}): ` +
+        `期望="${expectedIdentifier}", 实际=encryptGeekId:${currentIdentity.encryptGeekId}, name:${currentIdentity.name}`
+    )
+    await sleep(1000)
+  }
+
+  console.warn(
+    `[Interview MainLoop] 聊天切换验证超时，期望="${expectedIdentifier}"，继续处理（可能读到错误消息）`
+  )
 }
 
 /**

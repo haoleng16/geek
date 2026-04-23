@@ -17,6 +17,7 @@ import { InterviewQuestionRound } from '@geekgeekrun/sqlite-plugin/dist/entity/I
 import { InterviewCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewCandidate'
 import { InterviewQaRecord } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewQaRecord'
 import { InterviewResume } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewResume'
+import { InterviewOperationLog } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewOperationLog'
 import { InterviewSystemConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/InterviewSystemConfig'
 import { RecommendJobConfig } from '@geekgeekrun/sqlite-plugin/dist/entity/RecommendJobConfig'
 import { RecommendCandidate } from '@geekgeekrun/sqlite-plugin/dist/entity/RecommendCandidate'
@@ -47,6 +48,37 @@ dbInitPromise.then(
     // 不再 process.exit(1)，让主进程决定如何处理
   }
 )
+
+function applyInterviewCandidateFilters(qb, params: {
+  status?: string
+  jobPositionId?: number
+  updatedAtStart?: string
+  updatedAtEnd?: string
+}) {
+  if (params.status) {
+    qb.andWhere('candidate.status = :status', { status: params.status })
+  }
+
+  if (params.jobPositionId) {
+    qb.andWhere('candidate.jobPositionId = :jobPositionId', {
+      jobPositionId: params.jobPositionId
+    })
+  }
+
+  if (params.updatedAtStart) {
+    qb.andWhere('candidate.updatedAt >= :updatedAtStart', {
+      updatedAtStart: params.updatedAtStart
+    })
+  }
+
+  if (params.updatedAtEnd) {
+    qb.andWhere('candidate.updatedAt < :updatedAtEnd', {
+      updatedAtEnd: params.updatedAtEnd
+    })
+  }
+
+  return qb
+}
 
 const payloadHandler = {
   async saveAndGetCurrentRunRecord() {
@@ -478,20 +510,20 @@ const payloadHandler = {
     jobPositionId?: number
     page?: number
     pageSize?: number
+    updatedAtStart?: string
+    updatedAtEnd?: string
   }): Promise<{ data: InterviewCandidate[]; total: number }> {
-    const { status, jobPositionId, page = 1, pageSize = 20 } = params
+    const { page = 1, pageSize = 20 } = params
     const repo = dataSource!.getRepository(InterviewCandidate)
 
-    const where: any = {}
-    if (status) where.status = status
-    if (jobPositionId) where.jobPositionId = jobPositionId
+    const qb = repo.createQueryBuilder('candidate')
+    applyInterviewCandidateFilters(qb, params)
 
-    const [data, total] = await repo.findAndCount({
-      where,
-      order: { updatedAt: 'DESC' },
-      skip: (page - 1) * pageSize,
-      take: pageSize
-    })
+    const [data, total] = await qb
+      .orderBy('candidate.updatedAt', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize)
+      .getManyAndCount()
 
     return { data, total, page, pageSize }
   },
@@ -572,6 +604,12 @@ const payloadHandler = {
     Object.assign(entity, data)
     return await repo.save(entity)
   },
+  async saveInterviewOperationLog(data: Partial<InterviewOperationLog>): Promise<InterviewOperationLog> {
+    const repo = dataSource!.getRepository(InterviewOperationLog)
+    const entity = new InterviewOperationLog()
+    Object.assign(entity, data)
+    return await repo.save(entity)
+  },
   async getInterviewSystemConfig({ key }): Promise<string | null> {
     const repo = dataSource!.getRepository(InterviewSystemConfig)
     const entity = await repo.findOne({ where: { configKey: key } })
@@ -603,10 +641,16 @@ const payloadHandler = {
     entity.isEncrypted = isEncrypted || false
     await repo.save(entity)
   },
-  async countInterviewCandidatesByStatus(): Promise<Record<string, number>> {
+  async countInterviewCandidatesByStatus(params: {
+    status?: string
+    jobPositionId?: number
+    updatedAtStart?: string
+    updatedAtEnd?: string
+  } = {}): Promise<Record<string, number>> {
     const repo = dataSource!.getRepository(InterviewCandidate)
-    const result = await repo
-      .createQueryBuilder('candidate')
+    const qb = repo.createQueryBuilder('candidate')
+    applyInterviewCandidateFilters(qb, params)
+    const result = await qb
       .select('candidate.status', 'status')
       .addSelect('COUNT(*)', 'count')
       .groupBy('candidate.status')

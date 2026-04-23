@@ -941,13 +941,109 @@ export default function initIpc() {
   })
 
   // 获取候选人统计数据
-  ipcMain.handle('interview-get-candidate-stats', async () => {
+  ipcMain.handle('interview-get-candidate-stats', async (_, params: any) => {
     try {
       const { countInterviewCandidatesByStatus } = await import('../utils/db/index')
-      const result = await countInterviewCandidatesByStatus()
+      const result = await countInterviewCandidatesByStatus(params)
       return { success: true, data: result?.data }
     } catch (error: any) {
       console.error('interview-get-candidate-stats error:', error)
+      return { success: false, error: error?.message }
+    }
+  })
+
+  ipcMain.handle('interview-send-candidate-summary-email', async (_, params: any) => {
+    try {
+      const {
+        getInterviewCandidateList,
+        getInterviewQaRecordList,
+        getInterviewResume,
+        getInterviewSystemConfig,
+        saveInterviewResume,
+        saveInterviewOperationLog,
+        updateInterviewCandidateStatus
+      } = await import('../utils/db/index')
+      const { InterviewCandidateStatus } = await import('@geekgeekrun/sqlite-plugin/entity/InterviewCandidate')
+      const { sendCandidateSummaryEmail } = await import('../../INTERVIEW_AUTO_MAIN/email-sender')
+
+      const smtpConfigResult = await getInterviewSystemConfig('smtp_config')
+      const smtpConfigText = smtpConfigResult?.data
+      if (!smtpConfigText) {
+        return { success: false, error: '请先在邮件设置中保存 SMTP 配置' }
+      }
+
+      const smtpConfig = JSON.parse(smtpConfigText)
+      if (!smtpConfig.host || !smtpConfig.user || !smtpConfig.password || !smtpConfig.recipient) {
+        return { success: false, error: 'SMTP 配置不完整，请检查收件邮箱和授权信息' }
+      }
+
+      const candidateResult = await getInterviewCandidateList({
+        ...params,
+        page: 1,
+        pageSize: 10000
+      })
+      const actualData = candidateResult?.data || {}
+      const candidates = actualData.data || []
+      if (candidates.length === 0) {
+        return { success: false, error: '当前筛选结果没有可发送的候选人' }
+      }
+
+      const candidatesWithQa = await Promise.all(
+        candidates.map(async (candidate: any) => {
+          const qaResult = await getInterviewQaRecordList(candidate.id)
+          return {
+            ...candidate,
+            qaRecords: qaResult?.data || []
+          }
+        })
+      )
+
+      const subject = `【候选人看板】候选人汇总 ${new Date().toLocaleDateString('zh-CN')} (${candidatesWithQa.length}人)`
+      const sendResult = await sendCandidateSummaryEmail({
+        config: smtpConfig,
+        candidates: candidatesWithQa,
+        subject
+      })
+
+      if (!sendResult.success) {
+        return { success: false, error: sendResult.error || '邮件发送失败' }
+      }
+
+      const sentAt = new Date()
+      for (const candidate of candidatesWithQa) {
+        await updateInterviewCandidateStatus(candidate.id, InterviewCandidateStatus.EMAILED)
+
+        const resumeResult = await getInterviewResume(candidate.id)
+        const resume = resumeResult?.data
+        if (resume) {
+          await saveInterviewResume({
+            id: resume.id,
+            candidateId: candidate.id,
+            emailedAt: sentAt,
+            emailRecipient: smtpConfig.recipient
+          })
+        }
+
+        await saveInterviewOperationLog({
+          candidateId: candidate.id,
+          action: 'summary_email_sent',
+          detail: JSON.stringify({
+            recipient: smtpConfig.recipient,
+            sentAt: sentAt.toISOString(),
+            filter: params
+          })
+        })
+      }
+
+      return {
+        success: true,
+        data: {
+          count: candidatesWithQa.length,
+          recipient: smtpConfig.recipient
+        }
+      }
+    } catch (error: any) {
+      console.error('interview-send-candidate-summary-email error:', error)
       return { success: false, error: error?.message }
     }
   })

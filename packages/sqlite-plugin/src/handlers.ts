@@ -1,4 +1,4 @@
-import { DataSource, Raw } from "typeorm";
+import { DataSource, Raw, SelectQueryBuilder } from "typeorm";
 import { BossActiveStatusRecord } from "./entity/BossActiveStatusRecord";
 import { BossInfo } from "./entity/BossInfo";
 import { CompanyInfo } from "./entity/CompanyInfo";
@@ -796,6 +796,10 @@ export async function deleteInterviewQuestionRound(ds: DataSource, id: number) {
 
 /**
  * 保存面试候选人
+ *
+ * 防止虚拟滚动导致 encryptJobId 不稳定时产生重复记录：
+ * 1. 始终优先按 encryptGeekId 查找已有记录
+ * 2. 不允许空值覆盖已有的非空 encryptJobId
  */
 export async function saveInterviewCandidate(
   ds: DataSource,
@@ -807,22 +811,34 @@ export async function saveInterviewCandidate(
   if (data.id) {
     entity = await repo.findOne({ where: { id: data.id } }) || new InterviewCandidate();
   } else if (data.encryptGeekId) {
-    // 如果 encryptJobId 为空，只按 encryptGeekId 查找，避免因 SQLite NULL != NULL 导致重复创建
-    if (!data.encryptJobId || data.encryptJobId === '') {
-      entity = await repo.findOne({ where: { encryptGeekId: data.encryptGeekId } }) || new InterviewCandidate();
+    // 始终先按 encryptGeekId 查找所有已有记录，确保同一候选人不会重复创建
+    const existingCandidates = await repo.find({ where: { encryptGeekId: data.encryptGeekId } });
+
+    if (existingCandidates.length > 0) {
+      if (data.encryptJobId) {
+        // 优先匹配 encryptGeekId + encryptJobId 完全一致的记录
+        entity = existingCandidates.find(c => c.encryptJobId === data.encryptJobId)
+          || existingCandidates.find(c => c.encryptJobId && c.encryptJobId !== '')
+          || existingCandidates[0];
+      } else {
+        // encryptJobId 为空时，优先选有 encryptJobId 的记录（数据更完整）
+        entity = existingCandidates.find(c => c.encryptJobId && c.encryptJobId !== '')
+          || existingCandidates[0];
+      }
     } else {
-      entity = await repo.findOne({
-        where: {
-          encryptGeekId: data.encryptGeekId,
-          encryptJobId: data.encryptJobId
-        }
-      }) || new InterviewCandidate();
+      entity = new InterviewCandidate();
     }
   } else {
     entity = new InterviewCandidate();
   }
 
-  Object.assign(entity, data);
+  // 防止空值覆盖已有的非空关键字段
+  const safeData = { ...data };
+  if ((!safeData.encryptJobId || safeData.encryptJobId === '') && entity.encryptJobId && entity.encryptJobId !== '') {
+    delete safeData.encryptJobId;
+  }
+
+  Object.assign(entity, safeData);
   await repo.save(entity);
   return entity;
 }
@@ -870,21 +886,21 @@ export async function getInterviewCandidateList(
     jobPositionId?: number;
     page?: number;
     pageSize?: number;
+    updatedAtStart?: string;
+    updatedAtEnd?: string;
   }
 ) {
   const repo = ds.getRepository(InterviewCandidate);
-  const { status, jobPositionId, page = 1, pageSize = 20 } = params;
+  const { page = 1, pageSize = 20 } = params;
 
-  const where: any = {};
-  if (status) where.status = status;
-  if (jobPositionId) where.jobPositionId = jobPositionId;
+  const qb = repo.createQueryBuilder('candidate');
+  applyInterviewCandidateFilters(qb, params);
 
-  const [list, total] = await repo.findAndCount({
-    where,
-    order: { updatedAt: 'DESC' },
-    skip: (page - 1) * pageSize,
-    take: pageSize
-  });
+  const [list, total] = await qb
+    .orderBy('candidate.updatedAt', 'DESC')
+    .skip((page - 1) * pageSize)
+    .take(pageSize)
+    .getManyAndCount();
 
   return { list, total, page, pageSize };
 }
@@ -1100,10 +1116,19 @@ export async function getPendingInterviewCandidates(
 /**
  * 统计候选人状态数量
  */
-export async function countInterviewCandidatesByStatus(ds: DataSource) {
+export async function countInterviewCandidatesByStatus(
+  ds: DataSource,
+  params: {
+    status?: string;
+    jobPositionId?: number;
+    updatedAtStart?: string;
+    updatedAtEnd?: string;
+  } = {}
+) {
   const repo = ds.getRepository(InterviewCandidate);
-  const result = await repo
-    .createQueryBuilder('candidate')
+  const qb = repo.createQueryBuilder('candidate');
+  applyInterviewCandidateFilters(qb, params);
+  const result = await qb
     .select('candidate.status', 'status')
     .addSelect('COUNT(*)', 'count')
     .groupBy('candidate.status')
@@ -1114,4 +1139,38 @@ export async function countInterviewCandidatesByStatus(ds: DataSource) {
     stats[item.status] = Number(item.count);
   }
   return stats;
+}
+
+function applyInterviewCandidateFilters(
+  qb: SelectQueryBuilder<InterviewCandidate>,
+  params: {
+    status?: string;
+    jobPositionId?: number;
+    updatedAtStart?: string;
+    updatedAtEnd?: string;
+  }
+) {
+  if (params.status) {
+    qb.andWhere('candidate.status = :status', { status: params.status });
+  }
+
+  if (params.jobPositionId) {
+    qb.andWhere('candidate.jobPositionId = :jobPositionId', {
+      jobPositionId: params.jobPositionId
+    });
+  }
+
+  if (params.updatedAtStart) {
+    qb.andWhere('candidate.updatedAt >= :updatedAtStart', {
+      updatedAtStart: params.updatedAtStart
+    });
+  }
+
+  if (params.updatedAtEnd) {
+    qb.andWhere('candidate.updatedAt < :updatedAtEnd', {
+      updatedAtEnd: params.updatedAtEnd
+    });
+  }
+
+  return qb;
 }

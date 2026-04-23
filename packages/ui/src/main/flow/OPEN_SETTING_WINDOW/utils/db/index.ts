@@ -344,6 +344,8 @@ export const getInterviewCandidateList = async (params?: {
   jobPositionId?: number
   page?: number
   pageSize?: number
+  updatedAtStart?: string
+  updatedAtEnd?: string
 }) => {
   const res = await createWorkerPromise({
     type: 'getInterviewCandidateList',
@@ -419,6 +421,14 @@ export const saveInterviewResume = async (data: any) => {
   return res
 }
 
+export const saveInterviewOperationLog = async (data: any) => {
+  const res = await createWorkerPromise({
+    type: 'saveInterviewOperationLog',
+    ...data
+  })
+  return res
+}
+
 export const getInterviewSystemConfig = async (key: string) => {
   const res = await createWorkerPromise({
     type: 'getInterviewSystemConfig',
@@ -444,9 +454,15 @@ export const saveInterviewSystemConfig = async (key: string, value: string, isEn
   return res
 }
 
-export const countInterviewCandidatesByStatus = async () => {
+export const countInterviewCandidatesByStatus = async (params?: {
+  status?: string
+  jobPositionId?: number
+  updatedAtStart?: string
+  updatedAtEnd?: string
+}) => {
   const res = await createWorkerPromise({
-    type: 'countInterviewCandidatesByStatus'
+    type: 'countInterviewCandidatesByStatus',
+    ...params
   })
   return res
 }
